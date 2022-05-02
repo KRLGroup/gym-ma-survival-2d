@@ -1,0 +1,21 @@
+{
+  "walls": [[[7.5, 0.0], [7.5, 7.5], "True"],
+            [[7.5, 7.5], [15.0, 7.5], "True"]],
+
+  "doors": [["wall1", "end", "small"],
+            ["wall2", "end", "small"]],
+
+  "hiders": [[[10.0, 3.5], 90.0, "True", "True"],
+             [[5.0, 7.0], 90.0, "True", "True"]],
+
+  "seekers": [[[10.0, 10.0], 45.0, "True", "True"],
+              [[3.0, 12.0], 0.0, "True", "True"]],
+
+  "boxes": [[[13.0, 3.5], 0.0, "squared", "True", "True", "None"],
+            [[9.0, 9.0], 45.0, "squared", "True", "True", "None"]],
+
+  "ramps": [[[4.0, 2.5], 0.0, "True", "True", "None"],
+            [[13.0, 13.0], 0.0, "True", "True", "None"]],
+
+  "cylinders": [[[6.0, 12.0], 1.0, "True"]]
+}
