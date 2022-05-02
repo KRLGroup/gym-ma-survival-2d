@@ -1,5 +1,0 @@
-from multiagent_survival.gym_hidenseek.envs.hide_and_seek import HideAndSeek15x15Env
-#from multiagent_survival.gym_hidenseek.envs.randomized_hide_and_seek import RandomizedHideAndSeek15x15Env
-#from multiagent_survival.gym_hidenseek.envs.json_hide_and_seek import JsonHideAndSeek15x15Env
-#from multiagent_survival.gym_hidenseek.envs.lock_and_return import LockAndReturn15x15Env
-#from multiagent_survival.gym_hidenseek.envs.sequential_lock import SequentialLock15x15Env
