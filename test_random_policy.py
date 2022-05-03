@@ -1,7 +1,6 @@
 import gym
 
-from multiagent_survival.envs.multiagent_survival \
-    import MultiagentSurvivalEnv
+from mas.envs.mas_env MultiagentSurvivalEnv
 
 def main():
     env = MultiagentSurvivalEnv()
