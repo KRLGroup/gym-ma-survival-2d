@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union, Tuple, Dict, Callable
+from typing import Any, Optional, Union, Tuple, List, Dict, Callable
 from types import ModuleType
 from operator import attrgetter
 
@@ -20,30 +20,30 @@ import mas.rendering as rendering
 
 class MultiagentSurvivalEnv(gym.Env):
 
-    metadata: Dict[str, Any] = {
-        'render_modes': ['human', 'rgb_array'],
-        'render_fps': 30}
-
-    colors: Dict[str, rendering.Color] = {
-        'agent': (0, 0, 255),
-        'box': (255, 0, 0)}
-
-    # [none, up, down, left, right]
-    action_impulses = [ (0., 0.), (0., 1.), (0., -1.), (-1., 0.), (1., 0.) ]
-
     # simulation parameters
     time_step: float
     velocity_iterations: int = 10
     position_iterations: int = 10
+    # [0, 1, 2] -> [0., 1., -1.]
+    _impulses: List[float] = [ 0., 1., -1. ]
+
     # gym spaces    
-    action_space: spaces.Space = spaces.Discrete(5)
-    obs_space: spaces.Space = spaces.Box(
+    action_space: spaces.Space = spaces.MultiDiscrete([3,3])
+    observation_space: spaces.Space = spaces.Box(
         low=float('-inf'), high=float('inf'), shape=(2,2))
+    
     # world state
     _world: b2World
     _agent: b2Body
     _box: b2Body
+    
     # rendering
+    metadata: Dict[str, Any] = {
+        'render_modes': ['human', 'rgb_array'],
+        'render_fps': 30}
+    _colors: Dict[str, rendering.Color] = {
+        'agent': (0, 0, 255),
+        'box': (255, 0, 0)}
     _window: Optional[pygame.surface.Surface] = None
     _window_size: int = 512
     _clock: Optional[pygame.time.Clock] = None
@@ -67,8 +67,10 @@ class MultiagentSurvivalEnv(gym.Env):
         info: Dict = {}
         return (observation, info) if return_info else observation
 
-    def step(self, action: int) -> Tuple[ArrayLike, float, bool, Dict]:
-        simulation.apply_impulse(self.action_impulses[action], self._agent)
+    def step(self, action: Tuple[int, int]) \
+            -> Tuple[ArrayLike, float, bool, Dict]:
+        impulse = (self._impulses[action[0]], self._impulses[action[1]])
+        simulation.apply_impulse(impulse, self._agent)
         simulation.step_world(
             self._world, self.time_step, self.velocity_iterations, 
             self.position_iterations)
@@ -92,7 +94,7 @@ class MultiagentSurvivalEnv(gym.Env):
         #TODO maybe optimize by storing the surface between calls?
         canvas = pygame.Surface((self._window_size, self._window_size))
         canvas.fill((255, 255, 255))
-        rendering.draw_world(self._world, canvas, self.colors)
+        rendering.draw_world(self._world, canvas, self._colors)
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':

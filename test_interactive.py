@@ -6,25 +6,25 @@ from mas.envs.mas_env import MultiagentSurvivalEnv
 
 _n_controls = 4
 
-def get_action_from_keyboard(last_pressed):
+def get_action_from_keyboard():
     keyboard = pygame.key.get_pressed()
-    action = 0
-    pressed = np.array([keyboard[pygame.K_UP], keyboard[pygame.K_DOWN],
-                        keyboard[pygame.K_LEFT], keyboard[pygame.K_RIGHT]],
-                        dtype=bool)
-    new = ~last_pressed & pressed
-    if np.any(new):
-        action = np.nonzero(new)[0][0] + 1
-    elif np.any(pressed):
-        action = np.nonzero(pressed)[0][0] + 1
-    return action, pressed
+    action = [0, 0]
+    if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
+        action[0] = 2
+    if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
+        action[0] = 1
+    if keyboard[pygame.K_UP] and not keyboard[pygame.K_DOWN]:
+        action[1] = 1
+    if keyboard[pygame.K_DOWN] and not keyboard[pygame.K_UP]:
+        action[1] = 2
+    return action
 
 
 def main():
     env = MultiagentSurvivalEnv()
     print(f'Controls: UP, DOWN, LEFT, RIGHT')
     env.reset()
-    action = 0
+    action = env.action_space.sample()
     last_pressed = np.zeros(_n_controls, dtype=bool)
     done = False
     while not done:
@@ -32,7 +32,7 @@ def main():
         observation, reward, done, info = env.step(action)
         env.render(mode='human')
         print(f'observation = {observation}')
-        action, last_pressed = get_action_from_keyboard(last_pressed)
+        action = get_action_from_keyboard()
     print(f'done')
     env.close()
 
