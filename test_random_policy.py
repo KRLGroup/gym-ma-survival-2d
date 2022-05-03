@@ -1,12 +1,13 @@
 import gym
 
-from mas.envs.mas_env MultiagentSurvivalEnv
+from mas.envs.mas_env import MultiagentSurvivalEnv
 
 def main():
     env = MultiagentSurvivalEnv()
     print(env.action_space)
     print(env.observation_space)
     env.reset()
+    env.render(mode='human')
     done = False
     while not done:
         action = env.action_space.sample()

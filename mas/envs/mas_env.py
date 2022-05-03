@@ -21,7 +21,7 @@ import mas.rendering as rendering
 class MultiagentSurvivalEnv(gym.Env):
 
     # simulation parameters
-    time_step: float
+    simulation_substeps: int = 2
     velocity_iterations: int = 10
     position_iterations: int = 10
     # [0, 1, 2] -> [0., 1., -1.]
@@ -48,12 +48,10 @@ class MultiagentSurvivalEnv(gym.Env):
     _window_size: int = 512
     _clock: Optional[pygame.time.Clock] = None
 
-    def __init__(self, time_step: Optional[float] = None,
+    def __init__(self, simulation_substeps: int = 2,
                  velocity_iterations: int = 10,
                  position_iterations: int = 10) -> None:
-        if time_step is None:
-            time_step = 1/self.metadata['render_fps']
-        self.time_step = time_step
+        self.simulation_substeps = simulation_substeps
         self.velocity_iterations = velocity_iterations
         self.position_iterations = position_iterations
 
@@ -71,9 +69,10 @@ class MultiagentSurvivalEnv(gym.Env):
             -> Tuple[ArrayLike, float, bool, Dict]:
         impulse = (self._impulses[action[0]], self._impulses[action[1]])
         simulation.apply_impulse(impulse, self._agent)
-        simulation.step_world(
-            self._world, self.time_step, self.velocity_iterations, 
-            self.position_iterations)
+        simulation.simulate(
+            world=self._world, substeps=self.simulation_substeps, 
+            velocity_iterations=self.velocity_iterations, 
+            position_iterations=self.position_iterations)
         observation = self._get_obs()
         reward = 0.
         done = False
