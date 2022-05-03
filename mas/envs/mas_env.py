@@ -82,7 +82,7 @@ class MultiagentSurvivalEnv(gym.Env):
         agent_pos = self._agent.position
         box_pos = self._box.position
         observation = np.array([agent_pos, box_pos])
-        return observation        
+        return observation
 
     def render(self, mode: str = 'human') -> Optional[ArrayLike]:
         if mode not in self.metadata['render_modes']:

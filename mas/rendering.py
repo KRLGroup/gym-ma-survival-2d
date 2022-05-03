@@ -15,9 +15,9 @@ def draw_world(world: b2World, canvas: pygame.Surface,
     s = w / 20. # scale
     for body in world:
         local_vertices = body.fixtures[0].shape.vertices
-        x, y = body.position
-        world_vertices = [ (p[0] + x, -(p[1] + y)) for p in local_vertices]
-        vertices = [(s*p[0]+w/2., s*p[1]+h/2.) for p in world_vertices]
+        T = body.transform
+        world_vertices = [ T*p for p in local_vertices]
+        vertices = [(s*p[0]+w/2., -s*p[1]+h/2.) for p in world_vertices]
         if body.userData in colors:
             color = colors[body.userData]
         else:
