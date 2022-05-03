@@ -24,15 +24,14 @@ def main():
     env = MultiagentSurvivalEnv()
     print(f'Controls: UP, DOWN, LEFT, RIGHT')
     env.reset()
-    action = env.action_space.sample()
-    last_pressed = np.zeros(_n_controls, dtype=bool)
+    env.render(mode='human')
     done = False
     while not done:
+        action = get_action_from_keyboard()
         print(f'action: {action}')
         observation, reward, done, info = env.step(action)
         env.render(mode='human')
         print(f'observation = {observation}')
-        action = get_action_from_keyboard()
     print(f'done')
     env.close()
 
