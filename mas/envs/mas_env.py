@@ -33,9 +33,12 @@ class MultiagentSurvivalEnv(gym.Env):
         low=float('-inf'), high=float('inf'), shape=(2,2))
     
     # world state
+    _world_size: float = 20.
     _world: b2World
     _agent: b2Body
     _box: b2Body
+    _pillar: b2Body
+    _walls: List[b2Body]
     
     # rendering
     metadata: Dict[str, Any] = {
@@ -60,7 +63,8 @@ class MultiagentSurvivalEnv(gym.Env):
             -> Union[ArrayLike, Tuple[ArrayLike, Dict[Any, Any]]]:
         super().reset(seed=seed)
         self._world = b2World(gravity=(0, 0), doSleep=True)
-        self._agent, self._box = worldgen.populate_world(self._world)
+        bodies = worldgen.populate_world(self._world, self._world_size)
+        self._agent, self._box = bodies[0:2]
         observation = self._get_obs()
         info: Dict = {}
         return (observation, info) if return_info else observation
@@ -93,7 +97,8 @@ class MultiagentSurvivalEnv(gym.Env):
         #TODO maybe optimize by storing the surface between calls?
         canvas = pygame.Surface((self._window_size, self._window_size))
         canvas.fill((255, 255, 255))
-        rendering.draw_world(self._world, canvas, self._colors)
+        rendering.draw_world(canvas, self._world, self._world_size, 
+                             self._colors)
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':
