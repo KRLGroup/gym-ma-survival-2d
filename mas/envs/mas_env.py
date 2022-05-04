@@ -1,24 +1,26 @@
 from typing import Any, Optional, Union, Tuple, List, Dict, Callable
 from types import ModuleType
 from operator import attrgetter
+import math
 
 import numpy as np
 from numpy.typing import ArrayLike
 import gym
 from gym import spaces
 
-from Box2D import b2World, b2Body # type: ignore
+from Box2D import b2World, b2Body, b2Fixture # type: ignore
 
 #TODO make this optional
 import pygame
 
-from mas.types import Vec2
 import mas.simulation as simulation
 import mas.worldgen as worldgen
 import mas.rendering as rendering
 
 
-class MultiagentSurvivalEnv(gym.Env):
+Observation = simulation.LidarScan
+
+class MasEnv(gym.Env):
 
     # simulation parameters
     simulation_substeps: int = 2
@@ -29,8 +31,12 @@ class MultiagentSurvivalEnv(gym.Env):
 
     # gym spaces    
     action_space: spaces.Space = spaces.MultiDiscrete([3,3])
-    observation_space: spaces.Space = spaces.Box(
-        low=float('-inf'), high=float('inf'), shape=(2,2))
+    observation_space: spaces.Space = NotImplemented
+    _n_lasers: int = 10
+    _lidar_angle: float = 0.8*math.pi
+    _lidar_relative_depth: float = 0.1
+    _lidar_depth: float
+    _obs: Observation
     
     # world state
     _world_size: float = 20.
@@ -46,7 +52,8 @@ class MultiagentSurvivalEnv(gym.Env):
         'render_fps': 30}
     _colors: Dict[str, rendering.Color] = {
         'agent': (0, 0, 255),
-        'box': (255, 0, 0)}
+        'box': (255, 0, 0),
+        'lidar': (0, 255, 0),}
     _window: Optional[pygame.surface.Surface] = None
     _window_size: int = 512
     _clock: Optional[pygame.time.Clock] = None
@@ -57,37 +64,40 @@ class MultiagentSurvivalEnv(gym.Env):
         self.simulation_substeps = simulation_substeps
         self.velocity_iterations = velocity_iterations
         self.position_iterations = position_iterations
+        self._lidar_depth = self._lidar_relative_depth*self._world_size
 
-    def reset(self, *, seed: int = None, return_info: bool = False,
+    def reset(self, seed: int = None, return_info: bool = False,
               options: Optional[Dict[Any, Any]] = None) \
-            -> Union[ArrayLike, Tuple[ArrayLike, Dict[Any, Any]]]:
+            -> Union[Observation,
+                     Tuple[Observation, Dict[Any, Any]]]:
         super().reset(seed=seed)
         self._world = b2World(gravity=(0, 0), doSleep=True)
         bodies = worldgen.populate_world(self._world, self._world_size)
         self._agent, self._box = bodies[0:2]
-        observation = self._get_obs()
+        self._obs = self._observe()
         info: Dict = {}
-        return (observation, info) if return_info else observation
+        return (self._obs, info) if return_info else self._obs
 
     def step(self, action: Tuple[int, int]) \
-            -> Tuple[ArrayLike, float, bool, Dict]:
+            -> Tuple[Observation, float, bool, Dict]:
         impulse = (self._impulses[action[0]], self._impulses[action[1]])
         simulation.apply_impulse(impulse, self._agent)
         simulation.simulate(
             world=self._world, substeps=self.simulation_substeps, 
             velocity_iterations=self.velocity_iterations, 
             position_iterations=self.position_iterations)
-        observation = self._get_obs()
+        self._obs = self._observe()
         reward = 0.
         done = False
         info: Dict = {}
-        return observation, reward, done, info
+        return self._obs, reward, done, info
 
-    def _get_obs(self) -> ArrayLike:
-        agent_pos = self._agent.position
-        box_pos = self._box.position
-        observation = np.array([agent_pos, box_pos])
-        return observation
+    def _observe(self) -> Observation:
+        lidar_scan = simulation.lidar_scan(
+            world=self._world, n_lasers=self._n_lasers, 
+            transform=self._agent.transform, angle=self._lidar_angle, 
+            radius=self._lidar_depth)
+        return lidar_scan
 
     def render(self, mode: str = 'human') -> Optional[ArrayLike]:
         if mode not in self.metadata['render_modes']:
@@ -99,6 +109,10 @@ class MultiagentSurvivalEnv(gym.Env):
         canvas.fill((255, 255, 255))
         rendering.draw_world(canvas, self._world, self._world_size, 
                              self._colors)
+        rendering.draw_lidar(canvas, self._world_size,
+            n_lasers=self._n_lasers, transform=self._agent.transform, 
+            angle=self._lidar_angle, radius=self._lidar_depth, scan=self._obs, 
+            color=self._colors['lidar'])
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':

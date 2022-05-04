@@ -1,9 +1,9 @@
 import gym
 
-from mas.envs.mas_env import MultiagentSurvivalEnv
+from mas.envs.mas_env import MasEnv
 
 def main():
-    env = MultiagentSurvivalEnv()
+    env = MasEnv()
     print(env.action_space)
     print(env.observation_space)
     env.reset()
@@ -11,10 +11,10 @@ def main():
     done = False
     while not done:
         action = env.action_space.sample()
-        print(f'action = {action}')
+        #print(f'action = {action}')
         observation, reward, done, info = env.step(action)
         env.render(mode='human')
-        print(f'observation = {observation}')
+        #print(f'observation = {observation}')
     print(f'done')
     env.close()
 
