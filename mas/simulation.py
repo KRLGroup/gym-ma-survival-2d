@@ -30,7 +30,8 @@ def apply_angular_impulse(impulse: geo.Vec2, body: b2Body) -> None:
 
 # observing the world
 
-LidarScan = List[Optional[Tuple[b2Fixture, float]]]
+LaserScan = Tuple[b2Fixture, float]
+LidarScan = List[Optional[LaserScan]]
 
 def lidar_scan(world: b2World, n_lasers: int, transform: b2Transform,
                angle: float, radius: float) -> LidarScan:

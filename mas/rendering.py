@@ -61,14 +61,42 @@ def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
                                            default_outline_color)
         draw_body(canvas, body, color, to_screen, scale, 
                   outline_color=outline_color)
-        
+
+
+def draw_laser(
+        canvas: pygame.Surface, angle: float, radius: float,
+        transform: geo.Vec2, to_screen: b2Transform, scale: b2Mat22, 
+        start_screen: geo.Vec2, scan: Optional[simulation.LaserScan],
+        on_color: Color, off_color: Optional[Color] = None,
+        scanned_outline_color: Optional[Color] = None) -> None:
+    off_color = off_color or on_color
+    scanned_outline_color = scanned_outline_color or on_color
+    laser_world = geo.from_polar(length=radius, angle=angle)
+    end_world = transform*laser_world
+    end_screen = to_screen*(scale*end_world)
+    color = off_color
+    mid_screen: Optional[Tuple[float, float]] = None
+    if scan is not None:
+        color = on_color
+        scanned_body = scan[0].body
+        active_laser = geo.from_polar(length=scan[1], angle=angle)
+        mid_world = transform*active_laser
+        mid_screen = to_screen*(scale*mid_world)
+        draw_body(canvas, body=scanned_body, to_screen=to_screen, 
+                  scale=scale, color=None,
+                  outline_color=scanned_outline_color)
+    if mid_screen is None:
+        pygame.draw.line(canvas, color, start_screen, end_screen)
+    else:
+        pygame.draw.line(canvas, on_color, start_screen, mid_screen)
+        #pygame.draw.line(canvas, off_color, mid_screen, end_screen)
 
 def draw_lidar(
-      canvas: pygame.Surface, world_size: float, n_lasers: int,
-      transform: geo.Vec2, angle: float, radius: float,
-      scan: simulation.LidarScan, on_color: Color,
-      off_color: Optional[Color] = None,
-      scanned_outline_color: Optional[Color] = None) -> None:
+        canvas: pygame.Surface, world_size: float, n_lasers: int,
+        transform: geo.Vec2, angle: float, radius: float,
+        scan: simulation.LidarScan, on_color: Color,
+        off_color: Optional[Color] = None,
+        scanned_outline_color: Optional[Color] = None) -> None:
     off_color = off_color or on_color
     scanned_outline_color = scanned_outline_color or on_color
     w, h = canvas.get_width(), canvas.get_height()
@@ -79,24 +107,8 @@ def draw_lidar(
     start_screen = to_screen*(scale*start_world)
     for laser_id in range(n_lasers):
         laser_angle = angle*(laser_id/n_lasers - 0.5)
-        laser_world = geo.from_polar(length=radius, angle=laser_angle)
-        end_world = transform*laser_world
-        end_screen = to_screen*(scale*end_world)
-        color = off_color
-        mid_screen: Optional[Tuple[float, float]] = None
-        laser_scan = scan[laser_id]
-        if laser_scan is not None:
-            color = on_color
-            scanned_body = laser_scan[0].body
-            active_laser = geo.from_polar(
-                length=laser_scan[1], angle=laser_angle)
-            mid_world = transform*active_laser
-            mid_screen = to_screen*(scale*mid_world)
-            draw_body(canvas, body=scanned_body, to_screen=to_screen, 
-                      scale=scale, color=None,
-                      outline_color=scanned_outline_color)
-        if mid_screen is None:
-            pygame.draw.line(canvas, color, start_screen, end_screen)
-        else:
-            pygame.draw.line(canvas, on_color, start_screen, mid_screen)
-            #pygame.draw.line(canvas, off_color, mid_screen, end_screen)
+        draw_laser(
+            canvas, angle=laser_angle, radius=radius, transform=transform, 
+            to_screen=to_screen, scale=scale, start_screen=start_screen, 
+            scan=scan[laser_id], on_color=on_color, off_color=off_color, 
+            scanned_outline_color=scanned_outline_color)
