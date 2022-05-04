@@ -12,13 +12,11 @@ import mas.geometry as geo
 def add_body(world: b2World, position: geo.Vec2 = (0.,0.), angle: float = 0.,
              shape: Optional[b2Shape] = None, dynamic: bool = True,
              density: float = 1., restitution: float = 0.,
-             damping: float = 0.5, userData: Any = None,
-             fixture_userData: Any = None) -> b2Body:
+             damping: float = 0.5, userData: Any = None) -> b2Body:
     type = b2_dynamicBody if dynamic else b2_staticBody
     shape = shape or square_shape(side=1.)
     fixture = b2FixtureDef(shape=shape, density=density,
-                           restitution=restitution,
-                           userData=fixture_userData,)
+                           restitution=restitution,)
     body = world.CreateBody(
         type=type, position=position, angle=angle, fixtures=fixture,
         linearDamping=damping, angularDamping=damping, userData=userData)
@@ -36,8 +34,6 @@ def circle_shape(radius: float) -> b2Shape:
 
 # in these, relative_size is in [0.,1.] w.r.t. given world_size
 
-#TODO no need for fixture userData, remove it
-
 # relative size controls diameter
 def agent_body_spec(world_size: float, relative_size: float = 0.05,
                     tag: str = 'agent'):
@@ -47,8 +43,7 @@ def agent_body_spec(world_size: float, relative_size: float = 0.05,
         'density': 1.,
         'restitution': 0.,
         'damping': 0.5,
-        'userData': tag,
-        'fixture_userData': tag,}
+        'userData': tag,}
 
 def box_body_spec(world_size: float, relative_size: float = 0.1,
                   movable: bool = True, tag: str = 'box'):
@@ -58,8 +53,7 @@ def box_body_spec(world_size: float, relative_size: float = 0.1,
         'density': 1.,
         'restitution': 0.,
         'damping': 0.5,
-        'userData': tag,
-        'fixture_userData': tag,}
+        'userData': tag,}
 
 # horizontal wall; aspect_ratio is wall length / wall width
 def wall_body_spec(world_size: float, aspect_ratio=100.,
@@ -72,8 +66,7 @@ def wall_body_spec(world_size: float, aspect_ratio=100.,
         'density': 1.,
         'restitution': 0.,
         'damping': 0.5,
-        'userData': tag,
-        'fixture_userData': tag,}
+        'userData': tag,}
 
 
 def populate_world(world: b2World, world_size: float) \
