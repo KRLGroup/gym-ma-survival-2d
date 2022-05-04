@@ -34,15 +34,19 @@ def circle_shape(radius: float) -> b2Shape:
 
 # in these, relative_size is in [0.,1.] w.r.t. given world_size
 
+_density = 1.
+_restitution = 0.
+_damping = 0.8
+
 # relative size controls diameter
 def agent_body_spec(world_size: float, relative_size: float = 0.05,
                     tag: str = 'agent'):
     return {
         'shape': circle_shape(radius=(world_size*relative_size)/2.),
         'dynamic': True,
-        'density': 1.,
-        'restitution': 0.,
-        'damping': 0.5,
+        'density': 2.*_density,
+        'restitution': _restitution,
+        'damping': _damping,
         'userData': tag,}
 
 def box_body_spec(world_size: float, relative_size: float = 0.1,
@@ -50,9 +54,9 @@ def box_body_spec(world_size: float, relative_size: float = 0.1,
     return {
         'shape': square_shape(side=world_size*relative_size),
         'dynamic': movable,
-        'density': 1.,
-        'restitution': 0.,
-        'damping': 0.5,
+        'density': _density,
+        'restitution': _restitution,
+        'damping': _damping,
         'userData': tag,}
 
 # horizontal wall; aspect_ratio is wall length / wall width
@@ -63,27 +67,29 @@ def wall_body_spec(world_size: float, aspect_ratio=100.,
     return {
         'shape': rect_shape(width=width, height=height),
         'dynamic': False,
-        'density': 1.,
-        'restitution': 0.,
-        'damping': 0.5,
+        'density': _density,
+        'restitution': _restitution,
+        'damping': _damping,
         'userData': tag,}
 
 
 def populate_world(world: b2World, world_size: float) \
         -> Tuple[b2Body, b2Body, b2Body, List[b2Body]]:
     room_rel_size = 0.95
+    wall_aspect_ratio = 100.
     # body specifications
     agent_spec = agent_body_spec(world_size)
     box_spec = box_body_spec(world_size)
     pillar_spec = box_body_spec(world_size, movable=False, tag='pillar')
     wall_spec = wall_body_spec(world_size, relative_size=room_rel_size, 
-                               aspect_ratio=100.)
+                               aspect_ratio=wall_aspect_ratio)
     # add bodies to the world
     agent = add_body(world, **agent_spec, position=(0., world_size/5.))
     box = add_body(world, **box_spec, position=(world_size/5.,0.))
     pillar = add_body(world, **pillar_spec, position=(0., 0.))
     walls = []
-    walls_offset = room_rel_size*world_size/2.
+    walls_offset = room_rel_size*world_size/2. \
+                   - (world_size/wall_aspect_ratio)/2
     wall_placements = [
         ((0., walls_offset), 0.), # north wall
         ((0., -walls_offset), 0.), # south wall

@@ -25,6 +25,9 @@ def apply_force(force: geo.Vec2, body: b2Body) -> None:
 def apply_impulse(impulse: geo.Vec2, body: b2Body) -> None:
     body.ApplyLinearImpulse(impulse, body.worldCenter, True)
 
+def apply_angular_impulse(impulse: geo.Vec2, body: b2Body) -> None:
+    body.ApplyAngularImpulse(impulse, True)
+
 # observing the world
 
 LidarScan = List[Optional[Tuple[b2Fixture, float]]]

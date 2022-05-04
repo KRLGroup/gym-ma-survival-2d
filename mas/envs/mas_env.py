@@ -8,7 +8,7 @@ from numpy.typing import ArrayLike
 import gym
 from gym import spaces
 
-from Box2D import b2World, b2Body, b2Fixture # type: ignore
+from Box2D import b2World, b2Body, b2Fixture, b2Vec2 # type: ignore
 
 #TODO make this optional
 import pygame
@@ -29,10 +29,15 @@ class MasEnv(gym.Env):
     # [0, 1, 2] -> [0., 1., -1.]
     _impulses: List[float] = [ 0., 1., -1. ]
 
-    # gym spaces    
+    # actions  
     action_space: spaces.Space = spaces.MultiDiscrete([3,3])
+    # coefficient for the linear and angular impulses
+    _acc_sens: float = 0.5
+    _turn_sens: float = 0.025
+    
+    # observations
     observation_space: spaces.Space = NotImplemented
-    _n_lasers: int = 10
+    _n_lasers: int = 11
     _lidar_angle: float = 0.8*math.pi
     _lidar_relative_depth: float = 0.1
     _lidar_depth: float
@@ -53,6 +58,8 @@ class MasEnv(gym.Env):
     _colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gold'),
         'ground': pygame.Color('ivory2'),
+        'wall': pygame.Color('gray'),
+        'pillar': pygame.Color('gray'),
         'agent': pygame.Color('cyan3'),
         'lidar_off': pygame.Color('gray'),
         'lidar_on': pygame.Color('indianred2'),}
@@ -84,8 +91,11 @@ class MasEnv(gym.Env):
 
     def step(self, action: Tuple[int, int]) \
             -> Tuple[Observation, float, bool, Dict]:
-        impulse = (self._impulses[action[0]], self._impulses[action[1]])
+        impulse_local = b2Vec2(self._acc_sens*self._impulses[action[0]], 0.)
+        impulse = self._agent.transform.R * impulse_local
+        angular_impulse = self._turn_sens*self._impulses[action[1]]
         simulation.apply_impulse(impulse, self._agent)
+        simulation.apply_angular_impulse(angular_impulse, self._agent)
         simulation.simulate(
             world=self._world, substeps=self.simulation_substeps, 
             velocity_iterations=self.velocity_iterations, 
