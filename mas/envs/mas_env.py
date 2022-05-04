@@ -51,9 +51,13 @@ class MasEnv(gym.Env):
         'render_modes': ['human', 'rgb_array'],
         'render_fps': 30}
     _colors: Dict[str, rendering.Color] = {
-        'agent': (0, 0, 255),
-        'box': (255, 0, 0),
-        'lidar': (0, 255, 0),}
+        'default': pygame.Color('gold'),
+        'ground': pygame.Color('ivory2'),
+        'agent': pygame.Color('cyan3'),
+        'lidar_off': pygame.Color('gray'),
+        'lidar_on': pygame.Color('indianred2'),}
+    _outline_colors: Dict[str, rendering.Color] = {
+        'default': pygame.Color('gray25'),}
     _window: Optional[pygame.surface.Surface] = None
     _window_size: int = 512
     _clock: Optional[pygame.time.Clock] = None
@@ -106,13 +110,14 @@ class MasEnv(gym.Env):
             self._init_human_rendering()
         #TODO maybe optimize by storing the surface between calls?
         canvas = pygame.Surface((self._window_size, self._window_size))
-        canvas.fill((255, 255, 255))
+        canvas.fill(self._colors['ground'])
         rendering.draw_world(canvas, self._world, self._world_size, 
-                             self._colors)
+                             self._colors, self._outline_colors)
         rendering.draw_lidar(canvas, self._world_size,
             n_lasers=self._n_lasers, transform=self._agent.transform, 
             angle=self._lidar_angle, radius=self._lidar_depth, scan=self._obs, 
-            color=self._colors['lidar'])
+            on_color=self._colors['lidar_on'], 
+            off_color=self._colors['lidar_off'])
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':

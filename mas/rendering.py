@@ -1,4 +1,4 @@
-from typing import Union, Tuple, Dict
+from typing import Any, Callable, Optional, Union, Tuple, Dict
 
 #TODO make this optional
 import pygame
@@ -11,47 +11,66 @@ import mas.geometry as geo
 import mas.simulation as simulation
 
 
-Color = Union[Tuple[int, int, int], Tuple[int, int, int, int]]
+Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pygame.Color]
 
 
 # only draws the first fixture
-def draw_body(canvas: pygame.Surface, body: b2Body, color: Color,
-              to_screen: b2Transform, scale: b2Mat22, width=0):
+def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
+              to_screen: b2Transform, scale: b2Mat22,
+              outline_color: Optional[Color] = None) -> None:
+    fill_args = color and {'width': 0, 'color': color}
+    outline_args = outline_color and {'width': 1, 'color': outline_color}
     shape = body.fixtures[0].shape
+    shape_args: Dict
+    draw_func: Callable
     if isinstance(shape, b2CircleShape):
+        draw_func = pygame.draw.circle
         center_world = body.transform*b2Vec2(0., 0.)
         center_screen = to_screen*(scale*center_world)
         radius_screen = (scale*b2Vec2(shape.radius, 0.))[0]
-        pygame.draw.circle(canvas, color, center_screen, radius_screen, 
-                           width=width)
+        shape_args = {'center': center_screen, 'radius': radius_screen}
     elif isinstance(shape, b2PolygonShape):
+        draw_func = pygame.draw.polygon
         local_vertices = shape.vertices
         to_world = body.transform
         world_vertices = [ to_world*p for p in local_vertices]
-        vertices = [to_screen*(scale*p) for p in world_vertices]
-        pygame.draw.polygon(canvas, color, vertices, width=width)
+        screen_vertices = [to_screen*(scale*p) for p in world_vertices]
+        shape_args = {'points': screen_vertices}
     else:
         raise ValueError(f'draw_body: unsupported shape {shape}')
+    if fill_args is not None:
+        assert(isinstance(fill_args, dict))
+        draw_func(canvas, **shape_args, **fill_args)
+    if outline_args is not None:
+        assert(isinstance(outline_args, dict))
+        draw_func(canvas, **shape_args, **outline_args)
 
 
 def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
-               colors: Dict[str, Color]) -> None:
+               colors: Dict[str, Color],
+               outline_colors: Dict[str, Color] = {}) -> None:
+    default_color = colors.get('default', None)
+    default_outline_color = outline_colors.get('default', None)
     w, h = canvas.get_width(), canvas.get_height()
     to_screen = b2Transform()
     to_screen.Set(position=(w/2., h/2.), angle=0.0)
     scale = b2Mat22(w/world_size, 0., 0., -w/world_size)
     for body in world:
-        if body.userData in colors:
-            color = colors[body.userData]
-        else:
-            color = (128, 128, 128)
-        draw_body(canvas, body, color, to_screen, scale)
+        color = colors.get(body.userData, default_color)
+        outline_color = outline_colors.get(body.userData, 
+                                           default_outline_color)
+        draw_body(canvas, body, color, to_screen, scale, 
+                  outline_color=outline_color)
         
 
 def draw_lidar(
       canvas: pygame.Surface, world_size: float, n_lasers: int,
       transform: geo.Vec2, angle: float, radius: float,
-      scan: simulation.LidarScan, color: Color) -> None:
+      scan: simulation.LidarScan, on_color: Color,
+      off_color: Optional[Color] = None,
+      scanned_outline_color: Optional[Color] = None) -> None:
+    off_color = off_color or on_color
+    scanned_outline_color = scanned_outline_color or on_color
     w, h = canvas.get_width(), canvas.get_height()
     to_screen = b2Transform()
     to_screen.Set(position=(w/2., h/2.), angle=0.0)
@@ -63,9 +82,21 @@ def draw_lidar(
         laser_world = geo.from_polar(length=radius, angle=laser_angle)
         end_world = transform*laser_world
         end_screen = to_screen*(scale*end_world)
-        color_ = color
-        if scan[laser_id] is not None:
-            color_ = (255 - color[0], 255 - color[1], 255 - color[2])
-            scanned_body = scan[laser_id][0].body
-            draw_body(canvas, scanned_body, color_, to_screen, scale, width=2)
-        pygame.draw.line(canvas, color_, start_screen, end_screen)
+        color = off_color
+        mid_screen: Optional[Tuple[float, float]] = None
+        laser_scan = scan[laser_id]
+        if laser_scan is not None:
+            color = on_color
+            scanned_body = laser_scan[0].body
+            active_laser = geo.from_polar(
+                length=laser_scan[1], angle=laser_angle)
+            mid_world = transform*active_laser
+            mid_screen = to_screen*(scale*mid_world)
+            draw_body(canvas, body=scanned_body, to_screen=to_screen, 
+                      scale=scale, color=None,
+                      outline_color=scanned_outline_color)
+        if mid_screen is None:
+            pygame.draw.line(canvas, color, start_screen, end_screen)
+        else:
+            pygame.draw.line(canvas, on_color, start_screen, mid_screen)
+            #pygame.draw.line(canvas, off_color, mid_screen, end_screen)
