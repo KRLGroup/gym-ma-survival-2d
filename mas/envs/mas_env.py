@@ -136,15 +136,8 @@ class MasEnv(gym.Env):
             if grab_scan is not None:
                 grabee = grab_scan[0].body
                 grab_direction = agent.transform*b2Vec2(1.,0.)
-                self._hands[0] = self._world.CreatePrismaticJoint(
-                    bodyA=agent, 
-                    bodyB=grabee, 
-                    anchor=agent.worldCenter,
-                    axis=grab_direction,
-                    lowerTranslation=0.0,
-                    upperTranslation=0.0,
-                    enableLimit=True,
-                    enableMotor=False,)
+                self._hands[0] = simulation.holding_joint(
+                    holder=agent, held=grabee, world=self._world)
         elif hand is not None and action[2] == 0:
             self._world.DestroyJoint(self._hands[0])
             self._hands[0] = None

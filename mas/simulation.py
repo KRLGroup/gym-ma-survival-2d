@@ -1,7 +1,7 @@
 from typing import Optional, Tuple, List
 
 from Box2D import ( # type: ignore
-    b2World, b2Body, b2Fixture, b2RayCastCallback, b2Vec2, b2Mat22, 
+    b2World, b2Body, b2Fixture, b2Joint, b2RayCastCallback, b2Vec2, b2Mat22, 
     b2Transform)
 
 import mas.geometry as geo
@@ -27,6 +27,15 @@ def apply_impulse(impulse: geo.Vec2, body: b2Body) -> None:
 
 def apply_angular_impulse(impulse: geo.Vec2, body: b2Body) -> None:
     body.ApplyAngularImpulse(impulse, True)
+
+def holding_joint(holder: b2Body, held: b2Body, world: b2World) -> b2Joint:
+    axis = holder.transform*b2Vec2(1.,0.)
+    joint = world.CreatePrismaticJoint(
+        bodyA=holder, bodyB=held, anchor=holder.worldCenter,
+        axis=axis, lowerTranslation=0.0, upperTranslation=0.0,
+        enableLimit=True, enableMotor=False,)
+    return joint
+
 
 # observing the world
 
