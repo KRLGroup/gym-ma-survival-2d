@@ -1,4 +1,6 @@
-from typing import Any, Callable, Optional, Union, Tuple, Dict
+from typing import Any, Callable, Optional, Union, Tuple, Dict, Set
+
+import numpy as np
 
 #TODO make this optional
 import pygame
@@ -33,7 +35,7 @@ def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
         draw_func = pygame.draw.polygon
         local_vertices = shape.vertices
         to_world = body.transform
-        world_vertices = [ to_world*p for p in local_vertices]
+        world_vertices = [to_world*p for p in local_vertices]
         screen_vertices = [to_screen*(scale*p) for p in world_vertices]
         shape_args = {'points': screen_vertices}
     else:
@@ -61,6 +63,23 @@ def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
                                            default_outline_color)
         draw_body(canvas, body, color, to_screen, scale, 
                   outline_color=outline_color)
+
+
+def draw_points(canvas, world_xs: np.ndarray, world_ys: np.ndarray,
+                world_size: float, active_points: Set[int],
+                active_color: Color, inactive_color: Color,
+                rect_side: int = 4) -> None:
+    w, h = canvas.get_width(), canvas.get_height()
+    to_screen = b2Transform()
+    to_screen.Set(position=(w/2., h/2.), angle=0.0)
+    scale = b2Mat22(w/world_size, 0., 0., -w/world_size)
+    for p_id in range(world_xs.shape[0]):
+        color = active_color if p_id in active_points else inactive_color
+        p_world = b2Vec2(world_xs[p_id], world_ys[p_id])
+        p_screen = to_screen*(scale*p_world)
+        rect = pygame.Rect(p_screen[0]-rect_side/2, p_screen[1]-rect_side/2, 
+                           rect_side, rect_side)
+        pygame.draw.rect(canvas, color, rect)
 
 
 def draw_laser(
@@ -110,3 +129,4 @@ def draw_lidar(
             to_screen=to_screen, scale=scale, start_screen=start_screen, 
             scan=scan[laser_id], on_color=on_color, off_color=off_color, 
             scanned_outline_color=scanned_outline_color)
+

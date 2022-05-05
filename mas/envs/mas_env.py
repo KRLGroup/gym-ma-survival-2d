@@ -1,10 +1,9 @@
-from typing import Any, Optional, Union, Tuple, List, Dict, Callable
+from typing import Any, Optional, Union, Tuple, List, Dict, Set, Callable
 from types import ModuleType
 from operator import attrgetter
 import math
 
 import numpy as np
-from numpy.typing import ArrayLike
 import gym
 from gym import spaces
 
@@ -25,7 +24,12 @@ class MasEnv(gym.Env):
     # simulation parameters
     simulation_substeps: int = 2
     velocity_iterations: int = 10
-    position_iterations: int = 10
+    position_iterations: int = 10    
+
+    # worldgen parameters
+    _n_agents: int = 2
+    _n_boxes: int = 2
+    _n_pillars: int = 2
 
     # actions  
     action_space: spaces.Space = spaces.MultiDiscrete([3,3])
@@ -46,10 +50,13 @@ class MasEnv(gym.Env):
     # world state
     _world_size: float = 20.
     _world: b2World
-    _agent: b2Body
-    _box: b2Body
-    _pillar: b2Body
-    _walls: List[b2Body]
+    _agents: List[b2Body]
+    _spawn_grid_xs: np.ndarray
+    _spawn_grid_ys: np.ndarray
+    _free_spawn_cells: Set[int]
+
+    # RNG state    
+    _rng: np.random.Generator
     
     # rendering
     metadata: Dict[str, Any] = {
@@ -62,7 +69,9 @@ class MasEnv(gym.Env):
         'pillar': pygame.Color('gray'),
         'agent': pygame.Color('cyan3'),
         'lidar_off': pygame.Color('gray'),
-        'lidar_on': pygame.Color('indianred2'),}
+        'lidar_on': pygame.Color('indianred2'),
+        'free_cell': pygame.Color('green'),
+        'full_cell': pygame.Color('red'),}
     _outline_colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gray25'),}
     _window: Optional[pygame.surface.Surface] = None
@@ -70,11 +79,23 @@ class MasEnv(gym.Env):
     _clock: Optional[pygame.time.Clock] = None
 
     def __init__(self, simulation_substeps: int = 2,
-                 velocity_iterations: int = 10,
-                 position_iterations: int = 10) -> None:
+                 velocity_iterations: int = 10, position_iterations: int = 10,
+                 n_agents: Optional[int] = None,
+                 n_boxes: Optional[int] = None,
+                 n_pillars: Optional[int] = None,
+                 spawn_grid_size: int = 5,) -> None:
         self.simulation_substeps = simulation_substeps
         self.velocity_iterations = velocity_iterations
         self.position_iterations = position_iterations
+        if n_agents is not None:
+            self._n_agents = n_agents
+        if n_boxes is not None:
+            self._n_boxes = n_boxes
+        if n_pillars is not None:
+            self._n_pillars = n_pillars
+        self._spawn_grid_xs, self._spawn_grid_ys \
+            = worldgen.uniform_grid(cells_per_side=spawn_grid_size, 
+                                    grid_size=self._world_size)
         self._lidar_depth = self._lidar_relative_depth*self._world_size
 
     def reset(self, seed: int = None, return_info: bool = False,
@@ -82,20 +103,25 @@ class MasEnv(gym.Env):
             -> Union[Observation,
                      Tuple[Observation, Dict[Any, Any]]]:
         super().reset(seed=seed)
+        self._rng = np.random.default_rng(seed=seed)
         self._world = b2World(gravity=(0, 0), doSleep=True)
-        bodies = worldgen.populate_world(self._world, self._world_size)
-        self._agent, self._box = bodies[0:2]
+        bodies, self._free_spawn_cells = worldgen.populate_world(
+            self._world, self._world_size, spawn_grid_xs=self._spawn_grid_xs, 
+            spawn_grid_ys=self._spawn_grid_ys, n_agents=self._n_agents, 
+            n_boxes=self._n_boxes, n_pillars=self._n_pillars, rng=self._rng)
+        self._agents = bodies['agents']
         self._obs = self._observe()
         info: Dict = {}
         return (self._obs, info) if return_info else self._obs
 
     def step(self, action: Tuple[int, int]) \
             -> Tuple[Observation, float, bool, Dict]:
+        agent = self._agents[0]
         impulse_local = b2Vec2(self._acc_sens*self._impulses[action[0]], 0.)
-        impulse = self._agent.transform.R * impulse_local
+        impulse = agent.transform.R * impulse_local
         angular_impulse = self._turn_sens*self._impulses[action[1]]
-        simulation.apply_impulse(impulse, self._agent)
-        simulation.apply_angular_impulse(angular_impulse, self._agent)
+        simulation.apply_impulse(impulse, agent)
+        simulation.apply_angular_impulse(angular_impulse, agent)
         simulation.simulate(
             world=self._world, substeps=self.simulation_substeps, 
             velocity_iterations=self.velocity_iterations, 
@@ -107,13 +133,15 @@ class MasEnv(gym.Env):
         return self._obs, reward, done, info
 
     def _observe(self) -> Observation:
+        agent = self._agents[0]
         lidar_scan = simulation.lidar_scan(
             world=self._world, n_lasers=self._n_lasers, 
-            transform=self._agent.transform, angle=self._lidar_angle, 
+            transform=agent.transform, angle=self._lidar_angle, 
             radius=self._lidar_depth)
         return lidar_scan
 
-    def render(self, mode: str = 'human') -> Optional[ArrayLike]:
+    def render(self, mode: str = 'human') -> Optional[np.ndarray]:
+        agent = self._agents[0]
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if mode == 'human':
@@ -124,10 +152,15 @@ class MasEnv(gym.Env):
         rendering.draw_world(canvas, self._world, self._world_size, 
                              self._colors, self._outline_colors)
         rendering.draw_lidar(canvas, self._world_size,
-            n_lasers=self._n_lasers, transform=self._agent.transform, 
+            n_lasers=self._n_lasers, transform=agent.transform, 
             angle=self._lidar_angle, radius=self._lidar_depth, scan=self._obs, 
             on_color=self._colors['lidar_on'], 
             off_color=self._colors['lidar_off'])
+        rendering.draw_points(
+            canvas, self._spawn_grid_xs, self._spawn_grid_ys,
+            self._world_size, self._free_spawn_cells, 
+            self._colors['free_cell'], self._colors['full_cell']) 
+
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':
