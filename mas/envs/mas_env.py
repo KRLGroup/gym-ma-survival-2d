@@ -26,11 +26,11 @@ class MasEnv(gym.Env):
     simulation_substeps: int = 2
     velocity_iterations: int = 10
     position_iterations: int = 10
-    # [0, 1, 2] -> [0., 1., -1.]
-    _impulses: List[float] = [ 0., 1., -1. ]
 
     # actions  
     action_space: spaces.Space = spaces.MultiDiscrete([3,3])
+    # [0, 1, 2] -> [0., 1., -1.]
+    _impulses: List[float] = [ 0., 1., -1. ]
     # coefficient for the linear and angular impulses
     _acc_sens: float = 0.5
     _turn_sens: float = 0.025
@@ -57,7 +57,7 @@ class MasEnv(gym.Env):
         'render_fps': 30}
     _colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gold'),
-        'ground': pygame.Color('ivory2'),
+        'ground': pygame.Color('white'),
         'wall': pygame.Color('gray'),
         'pillar': pygame.Color('gray'),
         'agent': pygame.Color('cyan3'),

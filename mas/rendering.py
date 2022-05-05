@@ -69,7 +69,6 @@ def draw_laser(
         start_screen: geo.Vec2, scan: Optional[simulation.LaserScan],
         on_color: Color, off_color: Optional[Color] = None,
         scanned_outline_color: Optional[Color] = None) -> None:
-    off_color = off_color or on_color
     scanned_outline_color = scanned_outline_color or on_color
     laser_world = geo.from_polar(length=radius, angle=angle)
     end_world = transform*laser_world
@@ -85,11 +84,12 @@ def draw_laser(
         draw_body(canvas, body=scanned_body, to_screen=to_screen, 
                   scale=scale, color=None,
                   outline_color=scanned_outline_color)
-    if mid_screen is None:
-        pygame.draw.line(canvas, color, start_screen, end_screen)
-    else:
+    if mid_screen is not None:
         pygame.draw.line(canvas, on_color, start_screen, mid_screen)
         #pygame.draw.line(canvas, off_color, mid_screen, end_screen)
+    elif off_color is not None:
+        pygame.draw.line(canvas, off_color, start_screen, end_screen)
+
 
 def draw_lidar(
         canvas: pygame.Surface, world_size: float, n_lasers: int,
@@ -97,8 +97,6 @@ def draw_lidar(
         scan: simulation.LidarScan, on_color: Color,
         off_color: Optional[Color] = None,
         scanned_outline_color: Optional[Color] = None) -> None:
-    off_color = off_color or on_color
-    scanned_outline_color = scanned_outline_color or on_color
     w, h = canvas.get_width(), canvas.get_height()
     to_screen = b2Transform()
     to_screen.Set(position=(w/2., h/2.), angle=0.0)
