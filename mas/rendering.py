@@ -82,9 +82,24 @@ def draw_points(canvas, world_xs: np.ndarray, world_ys: np.ndarray,
         pygame.draw.rect(canvas, color, rect)
 
 
+def draw_ray(canvas: pygame.Surface, world_size: float,
+             transform: b2Transform, angle: float, depth: float,
+             color: Color) -> None:
+    w, h = canvas.get_width(), canvas.get_height()
+    to_screen = b2Transform()
+    to_screen.Set(position=(w/2., h/2.), angle=0.0)
+    scale = b2Mat22(w/world_size, 0., 0., -w/world_size)
+    start_world = transform*b2Vec2(0.,0.)
+    start_screen = to_screen*(scale*start_world)
+    ray_world = geo.from_polar(length=depth, angle=angle)
+    end_world = transform*ray_world
+    end_screen = to_screen*(scale*end_world)
+    pygame.draw.line(canvas, color, start_screen, end_screen)
+
+
 def draw_laser(
         canvas: pygame.Surface, angle: float, radius: float,
-        transform: geo.Vec2, to_screen: b2Transform, scale: b2Mat22, 
+        transform: b2Transform, to_screen: b2Transform, scale: b2Mat22, 
         start_screen: geo.Vec2, scan: Optional[simulation.LaserScan],
         on_color: Color, off_color: Optional[Color] = None,
         scanned_outline_color: Optional[Color] = None) -> None:
@@ -112,7 +127,7 @@ def draw_laser(
 
 def draw_lidar(
         canvas: pygame.Surface, world_size: float, n_lasers: int,
-        transform: geo.Vec2, angle: float, radius: float,
+        transform: b2Transform, angle: float, radius: float,
         scan: simulation.LidarScan, on_color: Color,
         off_color: Optional[Color] = None,
         scanned_outline_color: Optional[Color] = None) -> None:

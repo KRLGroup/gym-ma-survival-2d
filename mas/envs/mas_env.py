@@ -7,7 +7,7 @@ import numpy as np
 import gym
 from gym import spaces
 
-from Box2D import b2World, b2Body, b2Fixture, b2Vec2 # type: ignore
+from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 
 #TODO make this optional
 import pygame
@@ -31,13 +31,15 @@ class MasEnv(gym.Env):
     _n_boxes: int = 2
     _n_pillars: int = 2
 
-    # actions  
-    action_space: spaces.Space = spaces.MultiDiscrete([3,3])
+    # actions
+    action_space: spaces.Space = spaces.MultiDiscrete([3,3,2])
     # [0, 1, 2] -> [0., 1., -1.]
     _impulses: List[float] = [ 0., 1., -1. ]
-    # coefficient for the linear and angular impulses
+    # coefficients for the linear and angular impulses
     _acc_sens: float = 0.5
     _turn_sens: float = 0.025
+    _hold_relative_range: float = 0.05
+    _hold_range: float
     
     # observations
     observation_space: spaces.Space = NotImplemented
@@ -51,6 +53,7 @@ class MasEnv(gym.Env):
     _world_size: float = 20.
     _world: b2World
     _agents: List[b2Body]
+    _hands: List[Optional[b2Joint]]
     _spawn_grid_xs: np.ndarray
     _spawn_grid_ys: np.ndarray
     _free_spawn_cells: Set[int]
@@ -71,7 +74,9 @@ class MasEnv(gym.Env):
         'lidar_off': pygame.Color('gray'),
         'lidar_on': pygame.Color('indianred2'),
         'free_cell': pygame.Color('green'),
-        'full_cell': pygame.Color('red'),}
+        'full_cell': pygame.Color('red'),
+        'hand_on': pygame.Color('aquamarine3'),
+        'hand_off': pygame.Color('black')}
     _outline_colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gray25'),}
     _window: Optional[pygame.surface.Surface] = None
@@ -97,6 +102,7 @@ class MasEnv(gym.Env):
             = worldgen.uniform_grid(cells_per_side=spawn_grid_size, 
                                     grid_size=self._world_size)
         self._lidar_depth = self._lidar_relative_depth*self._world_size
+        self._hold_range = self._hold_relative_range*self._world_size
 
     def reset(self, seed: int = None, return_info: bool = False,
               options: Optional[Dict[Any, Any]] = None) \
@@ -110,18 +116,38 @@ class MasEnv(gym.Env):
             spawn_grid_ys=self._spawn_grid_ys, n_agents=self._n_agents, 
             n_boxes=self._n_boxes, n_pillars=self._n_pillars, rng=self._rng)
         self._agents = bodies['agents']
+        self._hands = [None]*len(self._agents)
         self._obs = self._observe()
         info: Dict = {}
         return (self._obs, info) if return_info else self._obs
 
-    def step(self, action: Tuple[int, int]) \
+    def step(self, action: Tuple[int, int, int]) \
             -> Tuple[Observation, float, bool, Dict]:
-        agent = self._agents[0]
+        agent, hand = self._agents[0], self._hands[0]
         impulse_local = b2Vec2(self._acc_sens*self._impulses[action[0]], 0.)
         impulse = agent.transform.R * impulse_local
         angular_impulse = self._turn_sens*self._impulses[action[1]]
         simulation.apply_impulse(impulse, agent)
         simulation.apply_angular_impulse(angular_impulse, agent)
+        if hand is None and action[2] == 1:
+            grab_scan = simulation.laser_scan(
+                world=self._world, transform=agent.transform, angle=0., 
+                depth=self._hold_range)
+            if grab_scan is not None:
+                grabee = grab_scan[0].body
+                grab_direction = agent.transform*b2Vec2(1.,0.)
+                self._hands[0] = self._world.CreatePrismaticJoint(
+                    bodyA=agent, 
+                    bodyB=grabee, 
+                    anchor=agent.worldCenter,
+                    axis=grab_direction,
+                    lowerTranslation=0.0,
+                    upperTranslation=0.0,
+                    enableLimit=True,
+                    enableMotor=False,)
+        elif hand is not None and action[2] == 0:
+            self._world.DestroyJoint(self._hands[0])
+            self._hands[0] = None
         simulation.simulate(
             world=self._world, substeps=self.simulation_substeps, 
             velocity_iterations=self.velocity_iterations, 
@@ -141,7 +167,7 @@ class MasEnv(gym.Env):
         return lidar_scan
 
     def render(self, mode: str = 'human') -> Optional[np.ndarray]:
-        agent = self._agents[0]
+        agent, hand = self._agents[0], self._hands[0]
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if mode == 'human':
@@ -153,14 +179,19 @@ class MasEnv(gym.Env):
                              self._colors, self._outline_colors)
         rendering.draw_lidar(canvas, self._world_size,
             n_lasers=self._n_lasers, transform=agent.transform, 
-            angle=self._lidar_angle, radius=self._lidar_depth, scan=self._obs, 
-            on_color=self._colors['lidar_on'], 
+            angle=self._lidar_angle, radius=self._lidar_depth, 
+            scan=self._obs, on_color=self._colors['lidar_on'], 
             off_color=self._colors['lidar_off'])
         rendering.draw_points(
             canvas, self._spawn_grid_xs, self._spawn_grid_ys,
             self._world_size, self._free_spawn_cells, 
-            self._colors['free_cell'], self._colors['full_cell']) 
-
+            self._colors['free_cell'], self._colors['full_cell'])
+        hand_color = self._colors['hand_on'] if hand is not None \
+                     else self._colors['hand_off']
+        rendering.draw_ray(
+            canvas, world_size=self._world_size, 
+            transform=agent.transform, angle=0.0, depth=self._hold_range,
+            color=hand_color)
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':

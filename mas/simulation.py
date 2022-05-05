@@ -31,6 +31,20 @@ def apply_angular_impulse(impulse: geo.Vec2, body: b2Body) -> None:
 # observing the world
 
 LaserScan = Tuple[b2Fixture, float]
+
+def laser_scan(world: b2World, transform: b2Transform, angle: float,
+               depth: float) -> Optional[LaserScan]:
+    start = transform*b2Vec2(0.,0.)
+    laser = geo.from_polar(length=depth, angle=angle)
+    end = transform*laser
+    scan = LaserRayCastCallback()
+    world.RayCast(scan, start, end)
+    if scan.relative_depth is None:
+        return None
+    depth = depth*scan.relative_depth
+    assert(scan.fixture is not None)
+    return scan.fixture, depth
+
 LidarScan = List[Optional[LaserScan]]
 
 def lidar_scan(world: b2World, n_lasers: int, transform: b2Transform,
@@ -38,17 +52,10 @@ def lidar_scan(world: b2World, n_lasers: int, transform: b2Transform,
     scanned: List[Optional[Tuple[b2Fixture, float]]] = []
     start = transform*b2Vec2(0.,0.)
     for laser_id in range(n_lasers):
-        laser_scan = LaserRayCastCallback()
         laser_angle = angle*(laser_id/n_lasers - 0.5)
-        laser = geo.from_polar(length=radius, angle=laser_angle)
-        end = transform*laser
-        world.RayCast(laser_scan, start, end)
-        if laser_scan.relative_depth is not None:
-            depth = radius*laser_scan.relative_depth
-            assert(laser_scan.fixture is not None)
-            scanned.append((laser_scan.fixture, depth))
-        else:
-            scanned.append(None)
+        scan = laser_scan(world=world, transform=transform, 
+                          angle=laser_angle, depth=radius)
+        scanned.append(scan)
     return scanned
 
 # from https://github.com/pybox2d/pybox2d/wiki/manual#ray-casts

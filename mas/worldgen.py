@@ -53,7 +53,7 @@ def agent_body_conf(world_size: float, relative_size: float = 0.05,
         'damping': _damping,
         'userData': tag,}
 
-def box_body_conf(world_size: float, relative_size: float = 0.1,
+def box_body_conf(world_size: float, relative_size: float = 0.05,
                   movable: bool = True, tag: str = 'box') -> BodyConf:
     return {
         'shape': square_shape(side=world_size*relative_size),
@@ -109,7 +109,8 @@ def populate_world(world: b2World, world_size: float,
     # body configurations
     agent_conf = agent_body_conf(world_size)
     box_conf = box_body_conf(world_size)
-    pillar_conf = box_body_conf(world_size, movable=False, tag='pillar')
+    pillar_conf = box_body_conf(world_size, movable=False, 
+                                relative_size=0.02, tag='pillar')
     wall_conf = wall_body_conf(world_size, relative_size=room_rel_size, 
                                aspect_ratio=wall_aspect_ratio)
 

@@ -8,7 +8,7 @@ _n_controls = 4
 
 def get_action_from_keyboard():
     keyboard = pygame.key.get_pressed()
-    action = [0, 0]
+    action = [0, 0, 0]
     if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
         action[1] = 1
     if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
@@ -17,6 +17,8 @@ def get_action_from_keyboard():
         action[0] = 1
     if keyboard[pygame.K_DOWN] and not keyboard[pygame.K_UP]:
         action[0] = 2
+    if keyboard[pygame.K_a]:
+        action[2] = 1
     return action
 
 
