@@ -138,7 +138,7 @@ def draw_lidar(
     start_world = transform*b2Vec2(0.,0.)
     start_screen = to_screen*(scale*start_world)
     for laser_id in range(n_lasers):
-        laser_angle = angle*(laser_id/n_lasers - 0.5)
+        laser_angle = laser_id*(angle/(n_lasers-1)) - angle/2.
         draw_laser(
             canvas, angle=laser_angle, radius=radius, transform=transform, 
             to_screen=to_screen, scale=scale, start_screen=start_screen, 

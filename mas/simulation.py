@@ -61,7 +61,7 @@ def lidar_scan(world: b2World, n_lasers: int, transform: b2Transform,
     scanned: List[Optional[Tuple[b2Fixture, float]]] = []
     start = transform*b2Vec2(0.,0.)
     for laser_id in range(n_lasers):
-        laser_angle = angle*(laser_id/n_lasers - 0.5)
+        laser_angle = laser_id*(angle/(n_lasers-1)) - angle/2.
         scan = laser_scan(world=world, transform=transform, 
                           angle=laser_angle, depth=radius)
         scanned.append(scan)

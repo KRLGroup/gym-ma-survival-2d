@@ -8,4 +8,3 @@ def from_polar(length: float, angle: float) -> b2Vec2:
     R = b2Mat22()
     R.angle = angle
     return R*b2Vec2(length, 0.)
-
