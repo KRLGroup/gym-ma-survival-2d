@@ -37,6 +37,12 @@ def holding_joint(holder: b2Body, held: b2Body, world: b2World) -> b2Joint:
         enableLimit=True, enableMotor=False,)
     return joint
 
+def set_static(body: b2Body):
+    body.type = b2_staticBody
+
+def set_dynamic(body: b2Body):
+    body.type = b2_dynamicBody
+
 
 # observing the world
 

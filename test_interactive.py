@@ -8,7 +8,7 @@ _n_controls = 4
 
 def get_action_from_keyboard():
     keyboard = pygame.key.get_pressed()
-    action = [0, 0, 0]
+    action = [0, 0, 0, 0]
     if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
         action[1] = 1
     if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
@@ -19,12 +19,17 @@ def get_action_from_keyboard():
         action[0] = 2
     if keyboard[pygame.K_a]:
         action[2] = 1
+    if keyboard[pygame.K_s]:
+        action[3] = 1
+    if keyboard[pygame.K_d]:
+        action[3] = 2
     return action
 
 
 def main():
     env = MasEnv()
-    print(f'Controls: UP: fwd, DOWN: bwd, LEFT: ccw, RIGHT: cw')
+    print(f'Controls: UP: fwd, DOWN: bwd, LEFT: ccw, RIGHT: cw, '
+          f'A: grab, S: lock, D: unlock')
     env.reset()
     env.render(mode='human')
     done = False

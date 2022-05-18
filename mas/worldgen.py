@@ -11,14 +11,17 @@ import mas.geometry as geo
 
 
 # shape is square of side 1 if None
+# copies userData to prevent object aliasing when using confs
 def add_body(world: b2World, position: geo.Vec2 = (0.,0.), angle: float = 0.,
              shape: Optional[b2Shape] = None, dynamic: bool = True,
              density: float = 1., restitution: float = 0.,
-             damping: float = 0.5, userData: Any = None) -> b2Body:
+             damping: float = 0.5, userData: Dict[str, Any] = {}) -> b2Body:
     type = b2_dynamicBody if dynamic else b2_staticBody
     shape = shape or square_shape(side=1.)
     fixture = b2FixtureDef(shape=shape, density=density,
                            restitution=restitution,)
+    # Copy userData to prevent object aliasing.
+    userData = dict(userData)
     body = world.CreateBody(
         type=type, position=position, angle=angle, fixtures=fixture,
         linearDamping=damping, angularDamping=damping, userData=userData)
@@ -51,7 +54,7 @@ def agent_body_conf(world_size: float, relative_size: float = 0.05,
         'density': 2.*_density,
         'restitution': _restitution,
         'damping': _damping,
-        'userData': tag,}
+        'userData': {'tag': tag},}
 
 def box_body_conf(world_size: float, relative_size: float = 0.05,
                   movable: bool = True, tag: str = 'box') -> BodyConf:
@@ -61,7 +64,7 @@ def box_body_conf(world_size: float, relative_size: float = 0.05,
         'density': _density,
         'restitution': _restitution,
         'damping': _damping,
-        'userData': tag,}
+        'userData': {'tag': tag, 'lockable': movable},}
 
 # horizontal wall; aspect_ratio is wall length / wall width
 def wall_body_conf(world_size: float, aspect_ratio=100.,
@@ -74,7 +77,7 @@ def wall_body_conf(world_size: float, aspect_ratio=100.,
         'density': _density,
         'restitution': _restitution,
         'damping': _damping,
-        'userData': tag,}
+        'userData': {'tag': tag},}
 
 def uniform_grid(cells_per_side: int, grid_size: float):
     centers = np.arange(cells_per_side)/cells_per_side \

@@ -19,7 +19,10 @@ Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pygame.Color]
 # only draws the first fixture
 def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
               to_screen: b2Transform, scale: b2Mat22,
-              outline_color: Optional[Color] = None) -> None:
+              outline_color: Optional[Color] = None,
+              locked_color: Optional[Color] = None) -> None:
+    if locked_color is not None and 'lock' in body.userData:
+        color = locked_color
     fill_args = color and {'width': 0, 'color': color}
     outline_args = outline_color and {'width': 1, 'color': outline_color}
     shape = body.fixtures[0].shape
@@ -52,17 +55,18 @@ def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
                colors: Dict[str, Color],
                outline_colors: Dict[str, Color] = {}) -> None:
     default_color = colors.get('default', None)
+    locked_color = colors.get('locked', None)
     default_outline_color = outline_colors.get('default', None)
     w, h = canvas.get_width(), canvas.get_height()
     to_screen = b2Transform()
     to_screen.Set(position=(w/2., h/2.), angle=0.0)
     scale = b2Mat22(w/world_size, 0., 0., -w/world_size)
     for body in world:
-        color = colors.get(body.userData, default_color)
-        outline_color = outline_colors.get(body.userData, 
+        color = colors.get(body.userData['tag'], default_color)
+        outline_color = outline_colors.get(body.userData['tag'], 
                                            default_outline_color)
         draw_body(canvas, body, color, to_screen, scale, 
-                  outline_color=outline_color)
+                  outline_color=outline_color, locked_color=locked_color)
 
 
 def draw_points(canvas, world_xs: np.ndarray, world_ys: np.ndarray,

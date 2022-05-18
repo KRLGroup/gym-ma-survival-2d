@@ -19,7 +19,7 @@ import mas.rendering as rendering
 
 AgentObservation = simulation.LidarScan
 Observation = Tuple[AgentObservation, ...]
-AgentAction = Tuple[int, int, int]
+AgentAction = Tuple[int, int, int, int]
 
 class MasEnv(gym.Env):
 
@@ -34,7 +34,7 @@ class MasEnv(gym.Env):
     _n_pillars: int = 2
 
     # actions
-    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,2])
+    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,2,3])
     action_space: spaces.Space
     # [0, 1, 2] -> [0., 1., -1.]
     _impulses: List[float] = [ 0., 1., -1. ]
@@ -42,7 +42,9 @@ class MasEnv(gym.Env):
     _acc_sens: float = 0.5
     _turn_sens: float = 0.025
     _hold_relative_range: float = 0.05
+    _lock_relative_range: float = 0.05
     _hold_range: float
+    _lock_range: float
     
     # observations
     observation_space: spaces.Space = NotImplemented
@@ -70,6 +72,7 @@ class MasEnv(gym.Env):
         'render_fps': 30}
     _colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gold'),
+        'locked': pygame.Color('gray31'),
         'ground': pygame.Color('white'),
         'wall': pygame.Color('gray'),
         'pillar': pygame.Color('gray'),
@@ -106,6 +109,7 @@ class MasEnv(gym.Env):
                                     grid_size=self._world_size)
         self._lidar_depth = self._lidar_relative_depth*self._world_size
         self._hold_range = self._hold_relative_range*self._world_size
+        self._lock_range = self._lock_relative_range*self._world_size
         self.action_space \
             = spaces.Tuple((self.agent_action_space,)*self._n_agents)
 
@@ -143,13 +147,22 @@ class MasEnv(gym.Env):
         return self._obs, reward, done, info
 
     def _act(self, agent_id: int, action: AgentAction) -> None:
-        agent, hand = self._agents[agent_id], self._hands[agent_id]
-        impulse_local = b2Vec2(self._acc_sens*self._impulses[action[0]], 0.)
-        impulse = agent.transform.R * impulse_local
-        angular_impulse = self._turn_sens*self._impulses[action[1]]
+        self._perform_movement(action[0], action[1], agent_id)
+        self._perform_hold(action[2], agent_id)
+        self._perform_lock(action[3], agent_id)
+
+    def _perform_movement(self, linear_action, angular_action, agent_id):
+        agent = self._agents[agent_id]
+        impulse_amp = self._acc_sens*self._impulses[linear_action]
+        impulse = agent.transform.R * b2Vec2(impulse_amp, 0.)
+        angular_impulse = self._turn_sens*self._impulses[angular_action]
         simulation.apply_impulse(impulse, agent)
-        simulation.apply_angular_impulse(angular_impulse, agent)
-        if hand is None and action[2] == 1:
+        simulation.apply_angular_impulse(angular_impulse, agent)        
+
+    def _perform_hold(self, hold_action, agent_id):
+        #TODO support a body attribute that prevents holding (e.g. for other agents, walls?, etc.)
+        agent, hand = self._agents[agent_id], self._hands[agent_id]
+        if hand is None and hold_action == 1:
             grab_scan = simulation.laser_scan(
                 world=self._world, transform=agent.transform, angle=0., 
                 depth=self._hold_range)
@@ -158,10 +171,36 @@ class MasEnv(gym.Env):
                 grab_direction = agent.transform*b2Vec2(1.,0.)
                 self._hands[agent_id] = simulation.holding_joint(
                     holder=agent, held=grabee, world=self._world)
-        elif hand is not None and action[2] == 0:
+        elif hand is not None and hold_action == 0:
             self._world.DestroyJoint(self._hands[agent_id])
             self._hands[agent_id] = None
 
+    def _perform_lock(self, lock_action, agent_id):
+        agent = self._agents[agent_id]
+        if lock_action == 0:
+            return
+        lock_scan = simulation.laser_scan(
+            world=self._world, transform=agent.transform, angle=0., 
+            depth=self._lock_range)
+        if lock_scan is None:
+            return
+        body = lock_scan[0].body
+        if not body.userData.get('lockable', False):
+            return
+        if lock_action == 1: # trying to lock
+            if 'lock' in body.userData:
+                return
+            body.userData['lock'] = agent
+            simulation.set_static(body)
+        elif lock_action == 2: # trying to unlock
+            if 'lock' not in body.userData:
+                return
+            if body.userData['lock'] is not agent:
+                return
+            del body.userData['lock']
+            simulation.set_dynamic(body)
+        else:
+            assert False, 'How did we get here?'
 
     def _observe(self, agent_id: int) -> AgentObservation:
         agent = self._agents[agent_id]
