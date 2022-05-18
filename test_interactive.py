@@ -29,7 +29,10 @@ def main():
     env.render(mode='human')
     done = False
     while not done:
-        action = get_action_from_keyboard()
+        actions = list(env.action_space.sample())
+        actions[0] = get_action_from_keyboard()
+        actions = tuple(actions)
+        action = actions
         #print(f'action: {action}')
         observation, reward, done, info = env.step(action)
         env.render(mode='human')
@@ -40,6 +43,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
 

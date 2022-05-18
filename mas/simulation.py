@@ -2,7 +2,7 @@ from typing import Optional, Tuple, List
 
 from Box2D import ( # type: ignore
     b2World, b2Body, b2Fixture, b2Joint, b2RayCastCallback, b2Vec2, b2Mat22, 
-    b2Transform)
+    b2Transform, b2_staticBody, b2_dynamicBody)
 
 import mas.geometry as geo
 
@@ -16,6 +16,7 @@ def simulate(
     for _ in range(substeps):
         world.Step(time_step, velocity_iterations, position_iterations)
     world.ClearForces()
+
 
 # acting on the world
 
@@ -46,13 +47,13 @@ def laser_scan(world: b2World, transform: b2Transform, angle: float,
     start = transform*b2Vec2(0.,0.)
     laser = geo.from_polar(length=depth, angle=angle)
     end = transform*laser
-    scan = LaserRayCastCallback()
-    world.RayCast(scan, start, end)
-    if scan.relative_depth is None:
+    raycast = LaserRayCastCallback()
+    world.RayCast(raycast, start, end)
+    if raycast.relative_depth is None:
         return None
-    depth = depth*scan.relative_depth
-    assert(scan.fixture is not None)
-    return scan.fixture, depth
+    depth = depth*raycast.relative_depth
+    assert(raycast.fixture is not None)
+    return raycast.fixture, depth
 
 LidarScan = List[Optional[LaserScan]]
 

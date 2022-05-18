@@ -17,7 +17,9 @@ import mas.worldgen as worldgen
 import mas.rendering as rendering
 
 
-Observation = simulation.LidarScan
+AgentObservation = simulation.LidarScan
+Observation = Tuple[AgentObservation, ...]
+AgentAction = Tuple[int, int, int]
 
 class MasEnv(gym.Env):
 
@@ -27,12 +29,13 @@ class MasEnv(gym.Env):
     position_iterations: int = 10    
 
     # worldgen parameters
-    _n_agents: int = 2
+    _n_agents: int = 4
     _n_boxes: int = 2
     _n_pillars: int = 2
 
     # actions
-    action_space: spaces.Space = spaces.MultiDiscrete([3,3,2])
+    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,2])
+    action_space: spaces.Space
     # [0, 1, 2] -> [0., 1., -1.]
     _impulses: List[float] = [ 0., 1., -1. ]
     # coefficients for the linear and angular impulses
@@ -103,6 +106,8 @@ class MasEnv(gym.Env):
                                     grid_size=self._world_size)
         self._lidar_depth = self._lidar_relative_depth*self._world_size
         self._hold_range = self._hold_relative_range*self._world_size
+        self.action_space \
+            = spaces.Tuple((self.agent_action_space,)*self._n_agents)
 
     def reset(self, seed: int = None, return_info: bool = False,
               options: Optional[Dict[Any, Any]] = None) \
@@ -117,13 +122,28 @@ class MasEnv(gym.Env):
             n_boxes=self._n_boxes, n_pillars=self._n_pillars, rng=self._rng)
         self._agents = bodies['agents']
         self._hands = [None]*len(self._agents)
-        self._obs = self._observe()
+        obs = [self._observe(i) for i in range(self._n_agents)]
+        self._obs = tuple(obs)
         info: Dict = {}
         return (self._obs, info) if return_info else self._obs
 
-    def step(self, action: Tuple[int, int, int]) \
+    def step(self, action: Tuple[AgentAction, ...]) \
             -> Tuple[Observation, float, bool, Dict]:
-        agent, hand = self._agents[0], self._hands[0]
+        for agent_id in range(self._n_agents):
+            self._act(agent_id, action[agent_id])
+        simulation.simulate(
+            world=self._world, substeps=self.simulation_substeps, 
+            velocity_iterations=self.velocity_iterations, 
+            position_iterations=self.position_iterations)
+        obs = [self._observe(i) for i in range(self._n_agents)]
+        self._obs = tuple(obs)
+        reward = 0.
+        done = False
+        info: Dict = {}
+        return self._obs, reward, done, info
+
+    def _act(self, agent_id: int, action: AgentAction) -> None:
+        agent, hand = self._agents[agent_id], self._hands[agent_id]
         impulse_local = b2Vec2(self._acc_sens*self._impulses[action[0]], 0.)
         impulse = agent.transform.R * impulse_local
         angular_impulse = self._turn_sens*self._impulses[action[1]]
@@ -136,23 +156,15 @@ class MasEnv(gym.Env):
             if grab_scan is not None:
                 grabee = grab_scan[0].body
                 grab_direction = agent.transform*b2Vec2(1.,0.)
-                self._hands[0] = simulation.holding_joint(
+                self._hands[agent_id] = simulation.holding_joint(
                     holder=agent, held=grabee, world=self._world)
         elif hand is not None and action[2] == 0:
-            self._world.DestroyJoint(self._hands[0])
-            self._hands[0] = None
-        simulation.simulate(
-            world=self._world, substeps=self.simulation_substeps, 
-            velocity_iterations=self.velocity_iterations, 
-            position_iterations=self.position_iterations)
-        self._obs = self._observe()
-        reward = 0.
-        done = False
-        info: Dict = {}
-        return self._obs, reward, done, info
+            self._world.DestroyJoint(self._hands[agent_id])
+            self._hands[agent_id] = None
 
-    def _observe(self) -> Observation:
-        agent = self._agents[0]
+
+    def _observe(self, agent_id: int) -> AgentObservation:
+        agent = self._agents[agent_id]
         lidar_scan = simulation.lidar_scan(
             world=self._world, n_lasers=self._n_lasers, 
             transform=agent.transform, angle=self._lidar_angle, 
@@ -160,7 +172,6 @@ class MasEnv(gym.Env):
         return lidar_scan
 
     def render(self, mode: str = 'human') -> Optional[np.ndarray]:
-        agent, hand = self._agents[0], self._hands[0]
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if mode == 'human':
@@ -170,21 +181,23 @@ class MasEnv(gym.Env):
         canvas.fill(self._colors['ground'])
         rendering.draw_world(canvas, self._world, self._world_size, 
                              self._colors, self._outline_colors)
-        rendering.draw_lidar(canvas, self._world_size,
-            n_lasers=self._n_lasers, transform=agent.transform, 
-            angle=self._lidar_angle, radius=self._lidar_depth, 
-            scan=self._obs, on_color=self._colors['lidar_on'], 
-            off_color=self._colors['lidar_off'])
         rendering.draw_points(
             canvas, self._spawn_grid_xs, self._spawn_grid_ys,
             self._world_size, self._free_spawn_cells, 
             self._colors['free_cell'], self._colors['full_cell'])
-        hand_color = self._colors['hand_on'] if hand is not None \
-                     else self._colors['hand_off']
-        rendering.draw_ray(
-            canvas, world_size=self._world_size, 
-            transform=agent.transform, angle=0.0, depth=self._hold_range,
-            color=hand_color)
+        for agent_id in range(self._n_agents):
+            agent, hand = self._agents[agent_id], self._hands[agent_id]
+            rendering.draw_lidar(canvas, self._world_size,
+                n_lasers=self._n_lasers, transform=agent.transform, 
+                angle=self._lidar_angle, radius=self._lidar_depth, 
+                scan=self._obs[agent_id], on_color=self._colors['lidar_on'], 
+                off_color=self._colors['lidar_off'])
+            hand_color = self._colors['hand_on'] if hand is not None \
+                         else self._colors['hand_off']
+            rendering.draw_ray(
+                canvas, world_size=self._world_size, 
+                transform=agent.transform, angle=0.0, depth=self._hold_range,
+                color=hand_color)
         if mode == 'human':
             self._render_human(canvas)
         elif mode == 'rgb_array':
