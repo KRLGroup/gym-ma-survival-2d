@@ -3,10 +3,10 @@ import time
 
 import gym
 
-from mas.envs.mas_env import MasEnv
+from masurvival.envs.masurvival_env import MaSurvivalEnv
 
 def main(render_mode: Optional[str]):
-    env = MasEnv()
+    env = MaSurvivalEnv()
     print(env.action_space)
     print(env.observation_space)
     env.reset()

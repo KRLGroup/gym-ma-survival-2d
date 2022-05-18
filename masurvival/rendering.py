@@ -9,8 +9,8 @@ from Box2D import ( # type: ignore
     b2World, b2Body, b2CircleShape, b2PolygonShape, b2Vec2, b2Transform,
     b2Mat22)
 
-import mas.geometry as geo
-import mas.simulation as simulation
+import masurvival.geometry as geo
+import masurvival.simulation as simulation
 
 
 Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pygame.Color]

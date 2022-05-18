@@ -2,7 +2,7 @@ import numpy as np
 import gym
 import pygame
 
-from mas.envs.mas_env import MasEnv
+from masurvival.envs.masurvival_env import MaSurvivalEnv
 
 _n_controls = 4
 
@@ -27,7 +27,7 @@ def get_action_from_keyboard():
 
 
 def main():
-    env = MasEnv()
+    env = MaSurvivalEnv()
     print(f'Controls: UP: fwd, DOWN: bwd, LEFT: ccw, RIGHT: cw, '
           f'A: grab, S: lock, D: unlock')
     env.reset()

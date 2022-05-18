@@ -12,16 +12,16 @@ from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 #TODO make this optional
 import pygame
 
-import mas.simulation as simulation
-import mas.worldgen as worldgen
-import mas.rendering as rendering
+import masurvival.simulation as simulation
+import masurvival.worldgen as worldgen
+import masurvival.rendering as rendering
 
 
 AgentObservation = simulation.LidarScan
 Observation = Tuple[AgentObservation, ...]
 AgentAction = Tuple[int, int, int, int]
 
-class MasEnv(gym.Env):
+class MaSurvivalEnv(gym.Env):
 
     # simulation parameters
     simulation_substeps: int = 2

@@ -4,7 +4,7 @@ from Box2D import ( # type: ignore
     b2World, b2Body, b2Fixture, b2Joint, b2RayCastCallback, b2Vec2, b2Mat22, 
     b2Transform, b2_staticBody, b2_dynamicBody)
 
-import mas.geometry as geo
+import masurvival.geometry as geo
 
 
 # stepping the simulation

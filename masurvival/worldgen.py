@@ -7,7 +7,7 @@ from Box2D import ( # type: ignore
      b2World, b2Body, b2FixtureDef, b2PolygonShape, b2CircleShape,
      b2_dynamicBody, b2_staticBody, b2Vec2, b2Shape)
 
-import mas.geometry as geo
+import masurvival.geometry as geo
 
 
 # shape is square of side 1 if None
