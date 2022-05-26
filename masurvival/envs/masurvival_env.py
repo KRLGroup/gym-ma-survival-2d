@@ -41,6 +41,9 @@ class MaSurvivalEnv(gym.Env):
     # coefficients for the linear and angular impulses
     _acc_sens: float = 0.5
     _turn_sens: float = 0.025
+    # coefficient for boosting angular impulse when the agent is holding an 
+    # object; this makes turning easier
+    _hold_turn_sens_boost: float = 3.0
     _hold_relative_range: float = 0.05
     _lock_relative_range: float = 0.05
     _hold_range: float
@@ -155,6 +158,8 @@ class MaSurvivalEnv(gym.Env):
         impulse_amp = self._acc_sens*self._impulses[linear_action]
         impulse = agent.transform.R * b2Vec2(impulse_amp, 0.)
         angular_impulse = self._turn_sens*self._impulses[angular_action]
+        if 'holds' in agent.userData:
+            angular_impulse *= self._hold_turn_sens_boost
         simulation.apply_impulse(impulse, agent)
         simulation.apply_angular_impulse(angular_impulse, agent)        
 

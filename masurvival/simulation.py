@@ -31,10 +31,9 @@ def apply_angular_impulse(impulse: geo.Vec2, body: b2Body) -> None:
 
 def holding_joint(holder: b2Body, held: b2Body, world: b2World) -> b2Joint:
     axis = holder.transform*b2Vec2(1.,0.)
-    joint = world.CreatePrismaticJoint(
-        bodyA=holder, bodyB=held, anchor=holder.worldCenter,
-        axis=axis, lowerTranslation=0.0, upperTranslation=0.0,
-        enableLimit=True, enableMotor=False,)
+    #midpoint = 0.5*(holder.worldCenter + held.worldCenter)
+    joint = world.CreateWeldJoint(
+        bodyA=holder, bodyB=held, anchor=holder.worldCenter)
     return joint
 
 def set_static(body: b2Body):
