@@ -8,19 +8,23 @@ _n_controls = 4
 
 def get_action_from_keyboard(last_pressed):
     keyboard = pygame.key.get_pressed()
-    action = [0, 0, 0, 0]
-    if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
-        action[1] = 1
-    if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
-        action[1] = 2
-    if keyboard[pygame.K_UP] and not keyboard[pygame.K_DOWN]:
+    action = [0, 0, 0, 0, 0]
+    if keyboard[pygame.K_w] and not keyboard[pygame.K_s]:
         action[0] = 1
-    if keyboard[pygame.K_DOWN] and not keyboard[pygame.K_UP]:
+    if keyboard[pygame.K_s] and not keyboard[pygame.K_w]:
         action[0] = 2
-    if keyboard[pygame.K_a]:
+    if keyboard[pygame.K_a] and not keyboard[pygame.K_d]:
+        action[1] = 1
+    if keyboard[pygame.K_d] and not keyboard[pygame.K_a]:
+        action[1] = 2
+    if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
         action[2] = 1
-    if keyboard[pygame.K_s] and not last_pressed[pygame.K_s]:
+    if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
+        action[2] = 2
+    if keyboard[pygame.K_LSHIFT]:
         action[3] = 1
+    if keyboard[pygame.K_e] and not last_pressed[pygame.K_e]:
+        action[4] = 1
     return action, keyboard
 
 

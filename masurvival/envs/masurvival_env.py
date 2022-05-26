@@ -34,7 +34,7 @@ class MaSurvivalEnv(gym.Env):
     _n_pillars: int = 2
 
     # actions
-    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,2,2])
+    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,3,2,2])
     action_space: spaces.Space
     # [0, 1, 2] -> [0., 1., -1.]
     _impulses: List[float] = [ 0., 1., -1. ]
@@ -135,6 +135,7 @@ class MaSurvivalEnv(gym.Env):
 
     def step(self, action: Tuple[AgentAction, ...]) \
             -> Tuple[Observation, float, bool, Dict]:
+        assert self.action_space.contains(action), "Invalid action."
         for i, agent in enumerate(self._agents):
             self._act(agent, action[i])
         simulation.simulate(
@@ -149,18 +150,22 @@ class MaSurvivalEnv(gym.Env):
         return self._obs, reward, done, info
 
     def _act(self, agent: b2Body, action: AgentAction) -> None:
-        self._perform_movement(agent, action[0], action[1])
-        self._perform_hold(agent, action[2])
-        self._perform_lock(agent, action[3])
+        self._perform_movement(agent, action[0], action[1], action[2])
+        self._perform_hold(agent, action[3])
+        self._perform_lock(agent, action[4])
 
-    def _perform_movement(self, agent: b2Body, linear_action: int, 
-                          angular_action: int):
-        impulse_amp = self._acc_sens*self._impulses[linear_action]
-        impulse = agent.transform.R * b2Vec2(impulse_amp, 0.)
+    def _perform_movement(
+            self, agent: b2Body, parallel_action: int, normal_action: int, 
+            angular_action: int):
+        R = agent.transform.R
+        x, y = b2Vec2(1., 0.), b2Vec2(0., 1.)
+        parallel_impulse = self._acc_sens*self._impulses[parallel_action]
+        normal_impulse = self._acc_sens*self._impulses[normal_action]
         angular_impulse = self._turn_sens*self._impulses[angular_action]
         if 'holds' in agent.userData:
             angular_impulse *= self._hold_turn_sens_boost
-        simulation.apply_impulse(impulse, agent)
+        simulation.apply_impulse(parallel_impulse*(R*x), agent)
+        simulation.apply_impulse(normal_impulse*(R*y), agent)
         simulation.apply_angular_impulse(angular_impulse, agent)        
 
     def _perform_hold(self, agent: b2Body, hold_action: int):
