@@ -48,7 +48,7 @@ class MaSurvivalEnv(gym.Env):
     
     # observations
     observation_space: spaces.Space = NotImplemented
-    _n_lasers: int = 11
+    _n_lasers: int = 8
     _lidar_angle: float = 0.8*math.pi
     _lidar_relative_depth: float = 0.1
     _lidar_depth: float
@@ -58,7 +58,6 @@ class MaSurvivalEnv(gym.Env):
     _world_size: float = 20.
     _world: b2World
     _agents: List[b2Body]
-    _hands: List[Optional[b2Joint]]
     _spawn_grid_xs: np.ndarray
     _spawn_grid_ys: np.ndarray
     _free_spawn_cells: Set[int]
@@ -72,17 +71,18 @@ class MaSurvivalEnv(gym.Env):
         'render_fps': 30}
     _colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gold'),
-        'locked': pygame.Color('gray31'),
+        'held': pygame.Color('sienna1'),
+        'locked': pygame.Color('slateblue3'),
         'ground': pygame.Color('white'),
         'wall': pygame.Color('gray'),
         'pillar': pygame.Color('gray'),
-        'agent': pygame.Color('cyan3'),
+        'agent': pygame.Color('cornflowerblue'),
         'lidar_off': pygame.Color('gray'),
         'lidar_on': pygame.Color('indianred2'),
         'free_cell': pygame.Color('green'),
         'full_cell': pygame.Color('red'),
-        'hand_on': pygame.Color('aquamarine3'),
-        'hand_off': pygame.Color('black')}
+        'hand_on': pygame.Color('springgreen2'),
+        'hand_off': pygame.Color('gray')}
     _outline_colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gray25'),}
     _window: Optional[pygame.surface.Surface] = None
@@ -125,7 +125,6 @@ class MaSurvivalEnv(gym.Env):
             spawn_grid_ys=self._spawn_grid_ys, n_agents=self._n_agents, 
             n_boxes=self._n_boxes, n_pillars=self._n_pillars, rng=self._rng)
         self._agents = bodies['agents']
-        self._hands = [None]*len(self._agents)
         obs = [self._observe(i) for i in range(self._n_agents)]
         self._obs = tuple(obs)
         info: Dict = {}
@@ -160,20 +159,32 @@ class MaSurvivalEnv(gym.Env):
         simulation.apply_angular_impulse(angular_impulse, agent)        
 
     def _perform_hold(self, hold_action, agent_id):
-        #TODO support a body attribute that prevents holding (e.g. for other agents, walls?, etc.)
-        agent, hand = self._agents[agent_id], self._hands[agent_id]
-        if hand is None and hold_action == 1:
-            grab_scan = simulation.laser_scan(
-                world=self._world, transform=agent.transform, angle=0., 
-                depth=self._hold_range)
-            if grab_scan is not None:
-                grabee = grab_scan[0].body
-                grab_direction = agent.transform*b2Vec2(1.,0.)
-                self._hands[agent_id] = simulation.holding_joint(
-                    holder=agent, held=grabee, world=self._world)
-        elif hand is not None and hold_action == 0:
-            self._world.DestroyJoint(self._hands[agent_id])
-            self._hands[agent_id] = None
+        agent = self._agents[agent_id]
+        if 'holds' in agent.userData and hold_action == 1:
+            return
+        if 'holds' not in agent.userData and hold_action == 0:
+            return
+        if hold_action == 0:
+            held_body, hold_joint = agent.userData['holds']
+            self._world.DestroyJoint(hold_joint)
+            del held_body.userData['heldBy']
+            del agent.userData['holds']
+            return
+        assert hold_action == 1, "How did we get here?"
+        hold_scan = simulation.laser_scan(
+            world=self._world, transform=agent.transform, angle=0., 
+            depth=self._hold_range)
+        if hold_scan is None:
+            return
+        body = hold_scan[0].body
+        if not body.userData.get('holdable', False):
+            return
+        if 'heldBy' in body.userData or 'lockedBy' in body.userData:
+            return
+        hold_joint = simulation.holding_joint(
+            holder=agent, held=body, world=self._world)
+        body.userData['heldBy'] = agent
+        agent.userData['holds'] = body, hold_joint
 
     def _perform_lock(self, lock_action, agent_id):
         agent = self._agents[agent_id]
@@ -188,16 +199,16 @@ class MaSurvivalEnv(gym.Env):
         if not body.userData.get('lockable', False):
             return
         if lock_action == 1: # trying to lock
-            if 'lock' in body.userData:
+            if 'lockedBy' in body.userData or 'heldBy' in body.userData:
                 return
-            body.userData['lock'] = agent
+            body.userData['lockedBy'] = agent
             simulation.set_static(body)
         elif lock_action == 2: # trying to unlock
-            if 'lock' not in body.userData:
+            if 'lockedBy' not in body.userData:
                 return
-            if body.userData['lock'] is not agent:
+            if body.userData['lockedBy'] is not agent:
                 return
-            del body.userData['lock']
+            del body.userData['lockedBy']
             simulation.set_dynamic(body)
         else:
             assert False, 'How did we get here?'
@@ -225,7 +236,8 @@ class MaSurvivalEnv(gym.Env):
             self._world_size, self._free_spawn_cells, 
             self._colors['free_cell'], self._colors['full_cell'])
         for agent_id in range(self._n_agents):
-            agent, hand = self._agents[agent_id], self._hands[agent_id]
+            agent = self._agents[agent_id]
+            hand = agent.userData.get('holds', None)
             rendering.draw_lidar(canvas, self._world_size,
                 n_lasers=self._n_lasers, transform=agent.transform, 
                 angle=self._lidar_angle, radius=self._lidar_depth, 

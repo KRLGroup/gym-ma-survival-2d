@@ -20,8 +20,11 @@ Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pygame.Color]
 def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
               to_screen: b2Transform, scale: b2Mat22,
               outline_color: Optional[Color] = None,
+              held_color: Optional[Color] = None,
               locked_color: Optional[Color] = None) -> None:
-    if locked_color is not None and 'lock' in body.userData:
+    if held_color is not None and 'heldBy' in body.userData:
+        color = held_color
+    if locked_color is not None and 'lockedBy' in body.userData:
         color = locked_color
     fill_args = color and {'width': 0, 'color': color}
     outline_args = outline_color and {'width': 1, 'color': outline_color}
@@ -55,6 +58,7 @@ def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
                colors: Dict[str, Color],
                outline_colors: Dict[str, Color] = {}) -> None:
     default_color = colors.get('default', None)
+    held_color = colors.get('held', None)
     locked_color = colors.get('locked', None)
     default_outline_color = outline_colors.get('default', None)
     w, h = canvas.get_width(), canvas.get_height()
@@ -66,7 +70,8 @@ def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
         outline_color = outline_colors.get(body.userData['tag'], 
                                            default_outline_color)
         draw_body(canvas, body, color, to_screen, scale, 
-                  outline_color=outline_color, locked_color=locked_color)
+                  outline_color=outline_color, held_color=held_color, 
+                  locked_color=locked_color)
 
 
 def draw_points(canvas, world_xs: np.ndarray, world_ys: np.ndarray,

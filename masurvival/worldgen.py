@@ -64,7 +64,7 @@ def box_body_conf(world_size: float, relative_size: float = 0.05,
         'density': _density,
         'restitution': _restitution,
         'damping': _damping,
-        'userData': {'tag': tag, 'lockable': movable},}
+        'userData': {'tag': tag, 'lockable': movable, 'holdable': movable},}
 
 # horizontal wall; aspect_ratio is wall length / wall width
 def wall_body_conf(world_size: float, aspect_ratio=100.,
