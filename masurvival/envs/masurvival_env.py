@@ -34,7 +34,7 @@ class MaSurvivalEnv(gym.Env):
     _n_pillars: int = 2
 
     # actions
-    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,2,3])
+    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,2,2])
     action_space: spaces.Space
     # [0, 1, 2] -> [0., 1., -1.]
     _impulses: List[float] = [ 0., 1., -1. ]
@@ -132,8 +132,8 @@ class MaSurvivalEnv(gym.Env):
 
     def step(self, action: Tuple[AgentAction, ...]) \
             -> Tuple[Observation, float, bool, Dict]:
-        for agent_id in range(self._n_agents):
-            self._act(agent_id, action[agent_id])
+        for i, agent in enumerate(self._agents):
+            self._act(agent, action[i])
         simulation.simulate(
             world=self._world, substeps=self.simulation_substeps, 
             velocity_iterations=self.velocity_iterations, 
@@ -145,21 +145,20 @@ class MaSurvivalEnv(gym.Env):
         info: Dict = {}
         return self._obs, reward, done, info
 
-    def _act(self, agent_id: int, action: AgentAction) -> None:
-        self._perform_movement(action[0], action[1], agent_id)
-        self._perform_hold(action[2], agent_id)
-        self._perform_lock(action[3], agent_id)
+    def _act(self, agent: b2Body, action: AgentAction) -> None:
+        self._perform_movement(agent, action[0], action[1])
+        self._perform_hold(agent, action[2])
+        self._perform_lock(agent, action[3])
 
-    def _perform_movement(self, linear_action, angular_action, agent_id):
-        agent = self._agents[agent_id]
+    def _perform_movement(self, agent: b2Body, linear_action: int, 
+                          angular_action: int):
         impulse_amp = self._acc_sens*self._impulses[linear_action]
         impulse = agent.transform.R * b2Vec2(impulse_amp, 0.)
         angular_impulse = self._turn_sens*self._impulses[angular_action]
         simulation.apply_impulse(impulse, agent)
         simulation.apply_angular_impulse(angular_impulse, agent)        
 
-    def _perform_hold(self, hold_action, agent_id):
-        agent = self._agents[agent_id]
+    def _perform_hold(self, agent: b2Body, hold_action: int):
         if 'holds' in agent.userData and hold_action == 1:
             return
         if 'holds' not in agent.userData and hold_action == 0:
@@ -186,10 +185,10 @@ class MaSurvivalEnv(gym.Env):
         body.userData['heldBy'] = agent
         agent.userData['holds'] = body, hold_joint
 
-    def _perform_lock(self, lock_action, agent_id):
-        agent = self._agents[agent_id]
+    def _perform_lock(self, agent: b2Body, lock_action: int):
         if lock_action == 0:
             return
+        assert lock_action == 1, 'How did we get here?'
         lock_scan = simulation.laser_scan(
             world=self._world, transform=agent.transform, angle=0., 
             depth=self._lock_range)
@@ -198,20 +197,19 @@ class MaSurvivalEnv(gym.Env):
         body = lock_scan[0].body
         if not body.userData.get('lockable', False):
             return
-        if lock_action == 1: # trying to lock
-            if 'lockedBy' in body.userData or 'heldBy' in body.userData:
-                return
-            body.userData['lockedBy'] = agent
+        if 'heldBy' in body.userData:
+            return
+        lockedBy = body.userData.get('lockedBy', None)
+        if lockedBy is not None and lockedBy is not agent:
+            return
+        if lockedBy is None:
             simulation.set_static(body)
-        elif lock_action == 2: # trying to unlock
-            if 'lockedBy' not in body.userData:
-                return
-            if body.userData['lockedBy'] is not agent:
-                return
-            del body.userData['lockedBy']
+            body.userData['lockedBy'] = agent
+            agent.userData['locks'] = body
+        else: # lockedBy is agent
             simulation.set_dynamic(body)
-        else:
-            assert False, 'How did we get here?'
+            del body.userData['lockedBy']
+            del agent.userData['locks']
 
     def _observe(self, agent_id: int) -> AgentObservation:
         agent = self._agents[agent_id]

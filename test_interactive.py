@@ -6,7 +6,7 @@ from masurvival.envs.masurvival_env import MaSurvivalEnv
 
 _n_controls = 4
 
-def get_action_from_keyboard():
+def get_action_from_keyboard(last_pressed):
     keyboard = pygame.key.get_pressed()
     action = [0, 0, 0, 0]
     if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
@@ -19,11 +19,9 @@ def get_action_from_keyboard():
         action[0] = 2
     if keyboard[pygame.K_a]:
         action[2] = 1
-    if keyboard[pygame.K_s]:
+    if keyboard[pygame.K_s] and not last_pressed[pygame.K_s]:
         action[3] = 1
-    if keyboard[pygame.K_d]:
-        action[3] = 2
-    return action
+    return action, keyboard
 
 
 def main():
@@ -33,9 +31,10 @@ def main():
     env.reset()
     env.render(mode='human')
     done = False
+    pressed = pygame.key.get_pressed()
     while not done:
         actions = list(env.action_space.sample())
-        actions[0] = get_action_from_keyboard()
+        actions[0], pressed = get_action_from_keyboard(pressed)
         actions = tuple(actions)
         action = actions
         #print(f'action: {action}')
