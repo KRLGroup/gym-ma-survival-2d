@@ -27,11 +27,17 @@ def get_action_from_keyboard(last_pressed):
         action[4] = 1
     return action, keyboard
 
+controls_doc = """Keyboard controls:
+W,A,S,D: parallel and normal movement
+LEFT,RIGHT: angular movement
+SHIFT: hold closest valid object in range
+E: lock/unlock closest valid object in range
+-------------
+"""
 
 def main():
-    env = MaSurvivalEnv()
-    print(f'Controls: UP: fwd, DOWN: bwd, LEFT: ccw, RIGHT: cw, '
-          f'A: grab, S: lock, D: unlock')
+    env = MaSurvivalEnv(n_agents=4)
+    print(controls_doc)
     env.reset()
     env.render(mode='human')
     done = False

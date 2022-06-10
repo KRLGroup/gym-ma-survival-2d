@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Union, Tuple, Dict, Set
+from typing import Any, Callable, Optional, Union, Tuple, Dict, Set, List
 
 import numpy as np
 
@@ -6,8 +6,8 @@ import numpy as np
 import pygame
 
 from Box2D import ( # type: ignore
-    b2World, b2Body, b2CircleShape, b2PolygonShape, b2Vec2, b2Transform,
-    b2Mat22)
+    b2World, b2Body, b2CircleShape, b2PolygonShape, b2EdgeShape, b2Vec2, 
+    b2Transform, b2Mat22)
 
 import masurvival.geometry as geo
 import masurvival.simulation as simulation
@@ -17,11 +17,15 @@ Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pygame.Color]
 
 
 # only draws the first fixture
-def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
+def draw_body(canvases: List[pygame.Surface], body: b2Body,
+              color: Optional[Color],
               to_screen: b2Transform, scale: b2Mat22,
               outline_color: Optional[Color] = None,
               held_color: Optional[Color] = None,
-              locked_color: Optional[Color] = None) -> None:
+              locked_color: Optional[Color] = None,
+              ramp_edge_color: Optional[Color] = None) -> None:
+    canvas = canvases[simulation.get_elevation(body)]
+    ramp_edge_color = ramp_edge_color or outline_color or color
     if held_color is not None and 'heldBy' in body.userData:
         color = held_color
     if locked_color is not None and 'lockedBy' in body.userData:
@@ -29,6 +33,9 @@ def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
     fill_args = color and {'width': 0, 'color': color}
     outline_args = outline_color and {'width': 1, 'color': outline_color}
     shape = body.fixtures[0].shape
+    ramp_edge = None
+    if len(body.fixtures) == 2 and body.userData['tag'] == 'ramp':
+        ramp_edge = body.fixtures[1]
     shape_args: Dict
     draw_func: Callable
     if isinstance(shape, b2CircleShape):
@@ -52,16 +59,25 @@ def draw_body(canvas: pygame.Surface, body: b2Body, color: Optional[Color],
     if outline_args is not None:
         assert(isinstance(outline_args, dict))
         draw_func(canvas, **shape_args, **outline_args)
+    if ramp_edge is not None:
+        assert(isinstance(ramp_edge.shape, b2EdgeShape))
+        local_vertices = ramp_edge.shape.vertices
+        to_world = body.transform
+        world_vertices = [to_world*p for p in local_vertices]
+        screen_vertices = [to_screen*(scale*p) for p in world_vertices]
+        pygame.draw.line(canvas, ramp_edge_color,
+                         screen_vertices[0], screen_vertices[1])
 
 
-def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
-               colors: Dict[str, Color],
+def draw_world(canvases: List[pygame.Surface], world: b2World,
+               world_size: float, colors: Dict[str, Color],
                outline_colors: Dict[str, Color] = {}) -> None:
     default_color = colors.get('default', None)
     held_color = colors.get('held', None)
     locked_color = colors.get('locked', None)
+    ramp_edge_color = colors.get('ramp_edge', None)
     default_outline_color = outline_colors.get('default', None)
-    w, h = canvas.get_width(), canvas.get_height()
+    w, h = canvases[0].get_width(), canvases[0].get_height()
     to_screen = b2Transform()
     to_screen.Set(position=(w/2., h/2.), angle=0.0)
     scale = b2Mat22(w/world_size, 0., 0., -w/world_size)
@@ -69,12 +85,13 @@ def draw_world(canvas: pygame.Surface, world: b2World, world_size: float,
         color = colors.get(body.userData['tag'], default_color)
         outline_color = outline_colors.get(body.userData['tag'], 
                                            default_outline_color)
-        draw_body(canvas, body, color, to_screen, scale, 
+        draw_body(canvases, body, color, to_screen, scale, 
                   outline_color=outline_color, held_color=held_color, 
-                  locked_color=locked_color)
+                  locked_color=locked_color, ramp_edge_color=ramp_edge_color)
 
 
-def draw_points(canvas, world_xs: np.ndarray, world_ys: np.ndarray,
+def draw_points(canvas: pygame.Surface, world_xs: np.ndarray,
+                world_ys: np.ndarray,
                 world_size: float, active_points: Set[int],
                 active_color: Color, inactive_color: Color,
                 rect_side: int = 4) -> None:
@@ -107,7 +124,7 @@ def draw_ray(canvas: pygame.Surface, world_size: float,
 
 
 def draw_laser(
-        canvas: pygame.Surface, angle: float, radius: float,
+        canvases: List[pygame.Surface], angle: float, radius: float,
         transform: b2Transform, to_screen: b2Transform, scale: b2Mat22, 
         start_screen: geo.Vec2, scan: Optional[simulation.LaserScan],
         on_color: Color, off_color: Optional[Color] = None,
@@ -124,23 +141,23 @@ def draw_laser(
         active_laser = geo.from_polar(length=scan[1], angle=angle)
         mid_world = transform*active_laser
         mid_screen = to_screen*(scale*mid_world)
-        draw_body(canvas, body=scanned_body, to_screen=to_screen, 
+        draw_body(canvases, body=scanned_body, to_screen=to_screen, 
                   scale=scale, color=None,
                   outline_color=scanned_outline_color)
     if mid_screen is not None:
-        pygame.draw.line(canvas, on_color, start_screen, mid_screen)
+        pygame.draw.line(canvases[15], on_color, start_screen, mid_screen)
         #pygame.draw.line(canvas, off_color, mid_screen, end_screen)
     elif off_color is not None:
-        pygame.draw.line(canvas, off_color, start_screen, end_screen)
+        pygame.draw.line(canvases[15], off_color, start_screen, end_screen)
 
 
 def draw_lidar(
-        canvas: pygame.Surface, world_size: float, n_lasers: int,
+        canvases: List[pygame.Surface], world_size: float, n_lasers: int,
         transform: b2Transform, angle: float, radius: float,
         scan: simulation.LidarScan, on_color: Color,
         off_color: Optional[Color] = None,
         scanned_outline_color: Optional[Color] = None) -> None:
-    w, h = canvas.get_width(), canvas.get_height()
+    w, h = canvases[0].get_width(), canvases[0].get_height()
     to_screen = b2Transform()
     to_screen.Set(position=(w/2., h/2.), angle=0.0)
     scale = b2Mat22(w/world_size, 0., 0., -w/world_size)
@@ -149,7 +166,7 @@ def draw_lidar(
     for laser_id in range(n_lasers):
         laser_angle = laser_id*(angle/(n_lasers-1)) - angle/2.
         draw_laser(
-            canvas, angle=laser_angle, radius=radius, transform=transform, 
+            canvases, angle=laser_angle, radius=radius, transform=transform, 
             to_screen=to_screen, scale=scale, start_screen=start_screen, 
             scan=scan[laser_id], on_color=on_color, off_color=off_color, 
             scanned_outline_color=scanned_outline_color)

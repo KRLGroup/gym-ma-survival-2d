@@ -19,7 +19,7 @@ import masurvival.rendering as rendering
 
 AgentObservation = simulation.LidarScan
 Observation = Tuple[AgentObservation, ...]
-AgentAction = Tuple[int, int, int, int]
+AgentAction = Tuple[int, int, int, int, int]
 
 class MaSurvivalEnv(gym.Env):
 
@@ -30,6 +30,7 @@ class MaSurvivalEnv(gym.Env):
 
     # worldgen parameters
     _n_agents: int = 4
+    _n_ramps: int = 2
     _n_boxes: int = 2
     _n_pillars: int = 2
 
@@ -80,12 +81,14 @@ class MaSurvivalEnv(gym.Env):
         'wall': pygame.Color('gray'),
         'pillar': pygame.Color('gray'),
         'agent': pygame.Color('cornflowerblue'),
+        'ramp': pygame.Color('white'),
         'lidar_off': pygame.Color('gray'),
         'lidar_on': pygame.Color('indianred2'),
         'free_cell': pygame.Color('green'),
         'full_cell': pygame.Color('red'),
         'hand_on': pygame.Color('springgreen2'),
-        'hand_off': pygame.Color('gray')}
+        'hand_off': pygame.Color('gray'),
+        'ramp_edge': pygame.Color('red')}
     _outline_colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gray25'),}
     _window: Optional[pygame.surface.Surface] = None
@@ -122,11 +125,12 @@ class MaSurvivalEnv(gym.Env):
                      Tuple[Observation, Dict[Any, Any]]]:
         super().reset(seed=seed)
         self._rng = np.random.default_rng(seed=seed)
-        self._world = b2World(gravity=(0, 0), doSleep=True)
+        self._world = simulation.empty_flatland()
         bodies, self._free_spawn_cells = worldgen.populate_world(
             self._world, self._world_size, spawn_grid_xs=self._spawn_grid_xs, 
-            spawn_grid_ys=self._spawn_grid_ys, n_agents=self._n_agents, 
-            n_boxes=self._n_boxes, n_pillars=self._n_pillars, rng=self._rng)
+            spawn_grid_ys=self._spawn_grid_ys, n_agents=self._n_agents,
+            n_ramps=self._n_ramps, n_boxes=self._n_boxes, 
+            n_pillars=self._n_pillars, rng=self._rng)
         self._agents = bodies['agents']
         obs = [self._observe(i) for i in range(self._n_agents)]
         self._obs = tuple(obs)
@@ -235,30 +239,37 @@ class MaSurvivalEnv(gym.Env):
         if mode == 'human':
             self._init_human_rendering()
         #TODO maybe optimize by storing the surface between calls?
-        canvas = pygame.Surface((self._window_size, self._window_size))
-        canvas.fill(self._colors['ground'])
-        rendering.draw_world(canvas, self._world, self._world_size, 
+        canvases = []
+        for i in range(16):
+            canvas = pygame.Surface((self._window_size, self._window_size), 
+                                    pygame.SRCALPHA)
+            if i == 0:
+                canvas.fill(self._colors['ground'])
+            else:
+                canvas.fill(pygame.Color([0, 0, 0, 0]))
+            canvases.append(canvas)
+        rendering.draw_world(canvases, self._world, self._world_size, 
                              self._colors, self._outline_colors)
         rendering.draw_points(
-            canvas, self._spawn_grid_xs, self._spawn_grid_ys,
+            canvases[0], self._spawn_grid_xs, self._spawn_grid_ys,
             self._world_size, self._free_spawn_cells, 
             self._colors['free_cell'], self._colors['full_cell'])
         for agent_id in range(self._n_agents):
             agent = self._agents[agent_id]
-            hand = agent.userData.get('holds', None)
-            rendering.draw_lidar(canvas, self._world_size,
+            rendering.draw_lidar(canvases, self._world_size,
                 n_lasers=self._n_lasers, transform=agent.transform, 
                 angle=self._lidar_angle, radius=self._lidar_depth, 
                 scan=self._obs[agent_id], on_color=self._colors['lidar_on'], 
                 off_color=self._colors['lidar_off'])
+            hand = agent.userData.get('holds', None)
             hand_color = self._colors['hand_on'] if hand is not None \
                          else self._colors['hand_off']
             rendering.draw_ray(
-                canvas, world_size=self._world_size, 
+                canvases[0], world_size=self._world_size, 
                 transform=agent.transform, angle=0.0, depth=self._hold_range,
                 color=hand_color)
         if mode == 'human':
-            self._render_human(canvas)
+            self._render_human(canvases)
         elif mode == 'rgb_array':
             transposed_img = np.array(pygame.surfarray.pixels3d(canvas))
             return np.transpose(transposed_img, axes=(1, 0, 2))
@@ -275,10 +286,11 @@ class MaSurvivalEnv(gym.Env):
         if self._clock is None:
             self._clock = pygame.time.Clock()
 
-    def _render_human(self, canvas) -> None:
+    def _render_human(self, canvases) -> None:
         assert(self._window is not None)
         assert(self._clock is not None)
-        self._window.blit(canvas, canvas.get_rect())
+        for canvas in canvases:
+            self._window.blit(canvas, canvas.get_rect())
         pygame.event.pump()
         pygame.display.update()
         self._clock.tick(self.metadata["render_fps"])        

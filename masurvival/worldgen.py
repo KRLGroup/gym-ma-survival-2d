@@ -8,25 +8,8 @@ from Box2D import ( # type: ignore
      b2_dynamicBody, b2_staticBody, b2Vec2, b2Shape)
 
 import masurvival.geometry as geo
-
-
-# shape is square of side 1 if None
-# copies userData to prevent object aliasing when using confs
-def add_body(world: b2World, position: geo.Vec2 = (0.,0.), angle: float = 0.,
-             shape: Optional[b2Shape] = None, dynamic: bool = True,
-             density: float = 1., restitution: float = 0.,
-             damping: float = 0.5, userData: Dict[str, Any] = {}) -> b2Body:
-    type = b2_dynamicBody if dynamic else b2_staticBody
-    shape = shape or square_shape(side=1.)
-    fixture = b2FixtureDef(shape=shape, density=density,
-                           restitution=restitution,)
-    # Copy userData to prevent object aliasing.
-    userData = dict(userData)
-    body = world.CreateBody(
-        type=type, position=position, angle=angle, fixtures=fixture,
-        linearDamping=damping, angularDamping=damping, userData=userData)
-    return body
-
+#TODO decouple this module from the simulation module (just avoid adding bodies directly to the world)
+import masurvival.simulation as simulation
 
 def square_shape(side: float) -> b2Shape:
     return b2PolygonShape(box=(side/2., side/2.))
@@ -37,13 +20,13 @@ def rect_shape(width: float, height: float) -> b2Shape:
 def circle_shape(radius: float) -> b2Shape:
     return b2CircleShape(radius=radius)
 
-# in these, relative_size is in [0.,1.] w.r.t. given world_size
-
 _density = 1.
 _restitution = 0.
 _damping = 0.8
 
 BodyConf = Dict[str, Any]
+
+# in these, relative_size is in [0.,1.] w.r.t. given world_size
 
 # relative size controls diameter
 def agent_body_conf(world_size: float, relative_size: float = 0.05,
@@ -56,6 +39,18 @@ def agent_body_conf(world_size: float, relative_size: float = 0.05,
         'damping': _damping,
         'userData': {'tag': tag},}
 
+def ramp_body_conf(world_size: float, relative_size: float = 0.05,
+                   tag: str = 'ramp') -> BodyConf:
+    return {
+        'shape': square_shape(side=world_size*relative_size),
+        'dynamic': True,
+        'sensor': False,
+        'ramp_edge': 0,
+        'density': _density,
+        'restitution': _restitution,
+        'damping': _damping,
+        'userData': {'tag': tag, 'lockable': True, 'holdable': True},}
+
 def box_body_conf(world_size: float, relative_size: float = 0.05,
                   movable: bool = True, tag: str = 'box') -> BodyConf:
     return {
@@ -67,12 +62,14 @@ def box_body_conf(world_size: float, relative_size: float = 0.05,
         'userData': {'tag': tag, 'lockable': movable, 'holdable': movable},}
 
 # horizontal wall; aspect_ratio is wall length / wall width
+#TODO use box2d chain shapes for world border
 def wall_body_conf(world_size: float, aspect_ratio=100.,
                    relative_size: float = 1., tag: str = 'wall') -> BodyConf:
     width = world_size*relative_size
     height = width/aspect_ratio
     return {
         'shape': rect_shape(width=width, height=height),
+        'extruded': True,
         'dynamic': False,
         'density': _density,
         'restitution': _restitution,
@@ -89,11 +86,13 @@ def uniform_grid(cells_per_side: int, grid_size: float):
 
 def populate_world(world: b2World, world_size: float,
                    spawn_grid_xs: np.ndarray, spawn_grid_ys: np.ndarray, 
-                   n_agents: int = 2, n_boxes: int = 2, n_pillars: int = 2,
+                   n_agents: int = 2, n_ramps: int = 2, n_boxes: int = 2, 
+                   n_pillars: int = 2,
                    rng: Optional[np.random.Generator] = None) \
         -> Tuple[Dict[str, List[b2Body]], Set[int]]:
 
     rng = rng or np.random.default_rng()
+    n_bodies = n_agents + n_ramps + n_pillars + n_boxes
 
     if len(spawn_grid_xs.shape) != 1:
         raise ValueError('spawn_grid_xs')
@@ -101,16 +100,17 @@ def populate_world(world: b2World, world_size: float,
         raise ValueError('spawn_grid_ys')
     if spawn_grid_xs.shape[0] != spawn_grid_ys.shape[0]:
         raise ValueError('spawn_grid_xs, spawn_grid_ys')
-    if spawn_grid_xs.shape[0] < n_agents + n_pillars + n_boxes:
+    if spawn_grid_xs.shape[0] < n_bodies:
         raise ValueError(f'populate_world: too few spawning cells: '
                          f'{spawn_grid_xs.shape[0]}, expected at least '
-                         f'{n_agents + n_pillars + n_boxes}')
+                         f'{n_bodies}')
     
     room_rel_size = 0.95
     wall_aspect_ratio = 100.
     
     # body configurations
     agent_conf = agent_body_conf(world_size)
+    ramp_conf = ramp_body_conf(world_size)
     box_conf = box_body_conf(world_size)
     pillar_conf = box_body_conf(world_size, movable=False, 
                                 relative_size=0.02, tag='pillar')
@@ -126,9 +126,15 @@ def populate_world(world: b2World, world_size: float,
         ((0., -walls_offset), 0.), # south wall
         ((walls_offset, 0.), math.pi/2.), # east wall
         ((-walls_offset, 0.), math.pi/2.),] # west wall
+    wall_beg_contact = lambda a,b: print('Begun wall contact')
+    wall_end_contact = lambda a,b: print('Ended wall contact')
     for position, angle in wall_placements:
-        wall = add_body(world, **wall_conf, position=position, angle=angle)
+        wall = simulation.add_body(
+            world, **wall_conf, position=position, angle=angle)
+        wall.userData['begin_contact'] = wall_beg_contact
+        wall.userData['end_contact'] = wall_end_contact
         walls.append(wall)
+
 
     # Configure random spawning: the world is divided into a grid of cells, 
     # and only one entity will be able to spawn in each cell.
@@ -139,12 +145,15 @@ def populate_world(world: b2World, world_size: float,
     # Randomly spawn entities in the configured spawning grid.
     agents, free_cells = random_spawns(n_agents, free_cells, agent_conf, 
                                        **spawning_conf)
+    ramps, free_cells = random_spawns(n_ramps, free_cells, ramp_conf, 
+                                       **spawning_conf)
     boxes, free_cells = random_spawns(n_boxes, free_cells, box_conf,
                                       **spawning_conf)
     pillars, free_cells = random_spawns(n_pillars, free_cells, pillar_conf,
                                        **spawning_conf)
     bodies = {
       'agents': agents,
+      'ramps': ramps,
       'boxes': boxes,
       'pillars': pillars,
       'walls': walls,}
@@ -162,7 +171,7 @@ def random_spawns(n_spawns: int, free_positions: Set[int],
     bodies = []
     for position_id in spawn_position_ids:
         position = xs[position_id], ys[position_id]
-        body = add_body(world, **body_conf, position=position)
+        body = simulation.add_body(world, **body_conf, position=position)
         bodies.append(body)
     return bodies, free_positions.difference(spawn_position_ids)
 
