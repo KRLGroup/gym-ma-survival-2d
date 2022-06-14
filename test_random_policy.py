@@ -10,8 +10,9 @@ def main(render_mode: Optional[str]):
     print(env.action_space)
     print(env.observation_space)
     env.reset()
+    frames = []
     if render_mode is not None:
-        render_frame = env.render(mode=render_mode)
+        frames.append(env.render(mode=render_mode))
     done = False
     start = time.time()
     for _ in range(1000):
@@ -19,12 +20,23 @@ def main(render_mode: Optional[str]):
         #print(f'action = {action}')
         observation, reward, done, info = env.step(action)
         if render_mode is not None:
-            render_frame = env.render(mode=render_mode)
+            frames.append(env.render(mode=render_mode))
         #print(f'observation = {observation}')
     end = time.time()
     print(f'avg step time: {(end - start)/1000.}')
     print(f'done')
     env.close()
+    if render_mode == 'rgb_array':
+        fpath = './random_policy.gif'
+        keep_interval = 10
+        import imageio
+        from pygifsicle import optimize # type: ignore
+        with imageio.get_writer(fpath, mode='I') as writer:
+            for i, frame in enumerate(frames):
+                if i % keep_interval == 0:
+                    writer.append_data(frame)
+        optimize(fpath)
+
 
 if __name__ == '__main__':
     import sys
@@ -39,6 +51,3 @@ if __name__ == '__main__':
     if len(sys.argv) > 2:
         render_mode = sys.argv[2]
     main(render_mode=render_mode)
-
-
-

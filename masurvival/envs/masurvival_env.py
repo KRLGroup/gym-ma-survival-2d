@@ -76,7 +76,8 @@ class MaSurvivalEnv(gym.Env):
     _canvas: Optional[rendering.Canvas] = None
 
     def __init__(self, simulation_substeps: int = 2,
-                 velocity_iterations: int = 10, position_iterations: int = 10,
+                 velocity_iterations: int = 10,
+                 position_iterations: int = 10,
                  n_agents: Optional[int] = None,
                  n_boxes: Optional[int] = None,
                  n_pillars: Optional[int] = None,
@@ -226,6 +227,8 @@ class MaSurvivalEnv(gym.Env):
                 surfaces=16, fps=self.metadata['render_fps'])
         self._canvas.clear()
         palette = self._palette
+        # Make mypy happy :|
+        assert(isinstance(palette, rendering.Palette))
         for i in range(self._spawn_grid_xs.shape[0]):
             x, y = self._spawn_grid_xs[i], self._spawn_grid_ys[i]
             color = palette['full_cell']

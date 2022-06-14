@@ -69,7 +69,7 @@ class Canvas:
     _to_screen: b2Transform
     _scale: b2Mat22
     _surfaces: List[pygame.surface.Surface]
-    _window: Optional[pygame.surface.Surface] = None
+    _window: pygame.surface.Surface
     _clock: Optional[pygame.time.Clock] = None
     
     def __init__(
@@ -87,6 +87,8 @@ class Canvas:
             pygame.display.init()
             self._window = pygame.display.set_mode((width, height))
             self._clock = pygame.time.Clock()
+        elif render_mode == 'rgb_array':
+            self._window = pygame.Surface((width, height))
         self._surfaces = [pygame.Surface((width, height), pygame.SRCALPHA)
                           for _ in range(surfaces)]
 
@@ -103,18 +105,16 @@ class Canvas:
                 surface.fill(pygame.Color([0, 0, 0, 0]))
 
     def render(self):
+        for surface in self._surfaces:
+            self._window.blit(surface, surface.get_rect())
         if self._render_mode == 'human':
-            # Make mypy happy :)
-            assert(self._window is not None)
-            assert(self._clock is not None)
-            for surface in self._surfaces:
-                self._window.blit(surface, surface.get_rect())
             pygame.event.pump()
             pygame.display.update()
             self._clock.tick(self._fps)
-        #elif self._render_mode == 'rgb_array':
-        #    transposed_img = np.array(pygame.surfarray.pixels3d(canvas))
-        #    return np.transpose(transposed_img, axes=(1, 0, 2))
+        elif self._render_mode == 'rgb_array':
+            pixels = pygame.surfarray.pixels3d(self._window)
+            transposed_img = np.array(pixels)
+            return np.transpose(transposed_img, axes=(1, 0, 2))
         else:
             assert False, 'How did we get here?'
 
