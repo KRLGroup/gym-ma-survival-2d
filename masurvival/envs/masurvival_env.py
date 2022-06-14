@@ -9,11 +9,12 @@ from gym import spaces
 
 from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 
-#TODO make this optional
+#TODO factor this out into rendering module
 import pygame
 
 import masurvival.simulation as simulation
 import masurvival.worldgen as worldgen
+#TODO make this optional
 import masurvival.rendering as rendering
 
 
@@ -91,9 +92,8 @@ class MaSurvivalEnv(gym.Env):
         'ramp_edge': pygame.Color('red')}
     _outline_colors: Dict[str, rendering.Color] = {
         'default': pygame.Color('gray25'),}
-    _window: Optional[pygame.surface.Surface] = None
     _window_size: int = 512
-    _clock: Optional[pygame.time.Clock] = None
+    _canvas: Optional[rendering.Canvas] = None
 
     def __init__(self, simulation_substeps: int = 2,
                  velocity_iterations: int = 10, position_iterations: int = 10,
@@ -127,7 +127,8 @@ class MaSurvivalEnv(gym.Env):
         self._rng = np.random.default_rng(seed=seed)
         self._world = simulation.empty_flatland()
         bodies, self._free_spawn_cells = worldgen.populate_world(
-            self._world, self._world_size, spawn_grid_xs=self._spawn_grid_xs, 
+            self._world, self._world_size, 
+            spawn_grid_xs=self._spawn_grid_xs, 
             spawn_grid_ys=self._spawn_grid_ys, n_agents=self._n_agents,
             n_ramps=self._n_ramps, n_boxes=self._n_boxes, 
             n_pillars=self._n_pillars, rng=self._rng)
@@ -236,68 +237,37 @@ class MaSurvivalEnv(gym.Env):
     def render(self, mode: str = 'human') -> Optional[np.ndarray]:
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
-        if mode == 'human':
-            self._init_human_rendering()
-        #TODO maybe optimize by storing the surface between calls?
-        canvases = []
-        for i in range(16):
-            canvas = pygame.Surface((self._window_size, self._window_size), 
-                                    pygame.SRCALPHA)
-            if i == 0:
-                canvas.fill(self._colors['ground'])
-            else:
-                canvas.fill(pygame.Color([0, 0, 0, 0]))
-            canvases.append(canvas)
-        rendering.draw_world(canvases, self._world, self._world_size, 
-                             self._colors, self._outline_colors)
-        rendering.draw_points(
-            canvases[0], self._spawn_grid_xs, self._spawn_grid_ys,
-            self._world_size, self._free_spawn_cells, 
-            self._colors['free_cell'], self._colors['full_cell'])
-        for agent_id in range(self._n_agents):
-            agent = self._agents[agent_id]
-            rendering.draw_lidar(canvases, self._world_size,
-                n_lasers=self._n_lasers, transform=agent.transform, 
-                angle=self._lidar_angle, radius=self._lidar_depth, 
-                scan=self._obs[agent_id], on_color=self._colors['lidar_on'], 
-                off_color=self._colors['lidar_off'])
+        if self._canvas is None:
+            self._canvas = rendering.Canvas(
+                width=self._window_size, height=self._window_size, 
+                world_size=self._world_size, 
+                background=self._colors['ground'], render_mode=mode, 
+                surfaces=16, fps=self.metadata['render_fps'])
+        self._canvas.clear()
+        for i in range(self._spawn_grid_xs.shape[0]):
+            x, y = self._spawn_grid_xs[i], self._spawn_grid_ys[i]
+            color = self._colors['full_cell']
+            if i in self._free_spawn_cells:
+                color = self._colors['free_cell']
+            self._canvas.draw_dot(b2Vec2(x,y), depth=0, color=color)
+        rendering.draw_world(self._canvas, self._world, self._colors, 
+                             self._outline_colors)
+        for i, agent in enumerate(self._agents):
+            rendering.draw_lidar(
+                self._canvas, n_lasers=self._n_lasers, 
+                fov=self._lidar_angle, radius=self._lidar_depth, 
+                transform=agent.transform, scan=self._obs[i], 
+                on=self._colors['lidar_on'], off=self._colors['lidar_off'])
             hand = agent.userData.get('holds', None)
             hand_color = self._colors['hand_on'] if hand is not None \
                          else self._colors['hand_off']
-            rendering.draw_ray(
-                canvases[0], world_size=self._world_size, 
-                transform=agent.transform, angle=0.0, depth=self._hold_range,
-                color=hand_color)
-        if mode == 'human':
-            self._render_human(canvases)
-        elif mode == 'rgb_array':
-            transposed_img = np.array(pygame.surfarray.pixels3d(canvas))
-            return np.transpose(transposed_img, axes=(1, 0, 2))
-        else:
-            assert False, 'How did we get here?'
-        return None # make mypy happy :D
-
-    def _init_human_rendering(self) -> None:
-        if self._window is None:
-            pygame.init()
-            pygame.display.init()
-            self._window = pygame.display.set_mode(
-                (self._window_size, self._window_size))
-        if self._clock is None:
-            self._clock = pygame.time.Clock()
-
-    def _render_human(self, canvases) -> None:
-        assert(self._window is not None)
-        assert(self._clock is not None)
-        for canvas in canvases:
-            self._window.blit(canvas, canvas.get_rect())
-        pygame.event.pump()
-        pygame.display.update()
-        self._clock.tick(self.metadata["render_fps"])        
+            rendering.draw_laser(
+              self._canvas, origin=agent.position, angle=agent.angle, 
+              depth=self._hold_range, scan=None, on=hand_color, 
+              off=hand_color)
+        return self._canvas.render()
 
     def close(self) -> None:
-        if self._window is None:
-            return
-        pygame.display.quit()
-        pygame.quit()
+        if self._canvas is not None:
+            self._canvas.close()
 
