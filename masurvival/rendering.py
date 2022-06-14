@@ -13,13 +13,57 @@ import masurvival.geometry as geo
 import masurvival.simulation as simulation
 
 
-Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pygame.Color]
+Color = pygame.Color
+ColorKey = \
+    Union[str,
+          Tuple[int, int, int],
+          Tuple[int, int, int, int],
+          pygame.Color]
 
-# some colors have a default when not given
-_def_color: Color = pygame.Color('black')
+_default_color = Color('black')
+
+class Palette:
+    colors: Dict[str, Color] = {
+        'default': Color('gold'),
+        'default_outline': Color('gray25'),
+        'background': Color('white'),
+        'held': Color('sienna1'),
+        'locked': Color('slateblue3'),
+        'wall': Color('gray'),
+        'pillar': Color('gray'),
+        'agent': Color('cornflowerblue'),
+        'ramp': Color('white'),
+        'lidar_off': Color('gray'),
+        'lidar_on': Color('indianred2'),
+        'free_cell': Color('green'),
+        'full_cell': Color('red'),
+        'hand_on': Color('springgreen2'),
+        'hand_off': Color('gray'),
+        'ramp_edge': Color('red'),
+        }
+    def __init__(self, colors: Optional[Dict[str, Color]] = None):
+        if colors is not None:
+            self.colors = colors
+    def get(self, key: ColorKey, default: Color = _default_color) -> Color:
+        if isinstance(key, str):
+            color = self.colors.get(key, None)
+            if color is not None:
+                return color
+            try:
+                color = Color(key)
+            except ValueError:
+                color = None
+            if color is not None:
+                return color
+            return self.colors.get('default', _default_color)
+        return Color(key)
+    def __getitem__(self, key: ColorKey) -> Color:
+        return self.get(key)
+
 
 class Canvas:
 
+    background: Color
     _render_mode: str
     _fps: int
     _to_screen: b2Transform
@@ -32,7 +76,7 @@ class Canvas:
             self, width: int, height: int, world_size: float,
             background: Color, render_mode: str = 'human',
             surfaces: int = 16, fps: int = 30):
-        self._background = background
+        self.background = background
         self._render_mode = render_mode
         self._fps = fps
         self._to_screen = b2Transform()
@@ -54,7 +98,7 @@ class Canvas:
     def clear(self):
         for i, surface in enumerate(self._surfaces):
             if i == 0:
-                surface.fill(self._background)
+                surface.fill(self.background)
             else:
                 surface.fill(pygame.Color([0, 0, 0, 0]))
 
@@ -75,8 +119,8 @@ class Canvas:
             assert False, 'How did we get here?'
 
     def draw_segment(
-            self, a: b2Vec2, b: b2Vec2, depth: int,
-            color: Color, width: int = 1):
+            self, a: b2Vec2, b: b2Vec2, depth: int, color: Color,
+            width: int = 1):
         surface = self._surfaces[depth]
         a = self._to_screen*(self._scale*a)
         b = self._to_screen*(self._scale*b)
@@ -127,23 +171,33 @@ class Canvas:
         elif isinstance(shape, b2EdgeShape):
             a, b = shape.vertices
             a, b = transform*a, transform*b
-            color = fill or outline or _def_color
+            color = fill or outline or _default_color
             self.draw_segment(a, b, depth=elevation, color=color)
         else:
             ValueError(f'draw_fixture: unsupported shape {type(shape)}')
 
 
 def draw_body(
-        canvas: Canvas, body: b2Body, fill: Optional[Color],
-        outline: Optional[Color], elevation: Optional[int] = None):
+        canvas: Canvas, body: b2Body,
+        fill: Optional[Union[Color, List[Color]]],
+        outline: Optional[Union[Color, List[Color]]],
+        elevation: Optional[int] = None):
     if fill is None and outline is None:
-        fill = _def_color
+        fill = _default_color
     transform = body.transform
     if elevation is None:
         elevation = simulation.get_elevation(body)
     for i, fixture in enumerate(body.fixtures):
-        fill_ = fill if not isinstance(fill, list) else fill[i]
-        outline_ = outline if not isinstance(outline, list) else outline[i]
+        fill_: Optional[Color]
+        if isinstance(fill, list):
+            fill_ = fill[i]
+        else:
+            fill_ = fill
+        outline_: Optional[Color]
+        if isinstance(outline, list):
+            outline_ = outline[i]
+        else:
+            outline_ = outline
         canvas.draw_fixture(fixture, transform, elevation, fill_, outline_)
 
 def draw_laser(
@@ -152,10 +206,16 @@ def draw_laser(
         elevation: int = 15):
     is_on = scan is not None
     color = on if is_on else off
-    length = depth if not is_on else scan[1]
+    length = depth
+    if is_on:
+        # Make mypy happy :|
+        assert(scan is not None)
+        length = scan[1]
     endpoint = origin + geo.from_polar(length=length, angle=angle)
     canvas.draw_segment(a=origin, b=endpoint, depth=elevation, color=color)
     if is_on:
+        # Make mypy happy :|
+        assert(scan is not None)
         draw_body(canvas, scan[0].body, fill=None, outline=on, 
                   elevation=elevation)
 
@@ -171,23 +231,22 @@ def draw_lidar(
             canvas, origin=origin, angle=angle, depth=radius, scan=scan[i], 
             on=on, off=off, elevation=elevation)
 
-#TODO types
-def draw_world(
-        canvas: Canvas, world: b2World, fill_colors: Any,
-        outline_colors: Any):
-    default_fill = fill_colors.get('default', None)
-    default_outline = outline_colors.get('default', None)
-    held = fill_colors.get('held', default_fill)
-    locked = fill_colors.get('locked', default_fill)
-    ramp_edge = fill_colors.get('ramp_edge', default_fill)
+#TODO support fill and outline colors properly
+def draw_world(canvas: Canvas, world: b2World, palette: Palette):
+    default_fill = palette['default']
+    default_outline = palette['default_outline']
+    held = palette.get('held', default_fill)
+    locked = palette.get('locked', default_fill)
+    ramp_edge = palette.get('ramp_edge', default_fill)
     for body in world:
         tag = body.userData['tag']
-        fill = fill_colors.get(tag, default_fill)
-        outline = outline_colors.get(tag, default_outline)
+        fill: Union[Color, List[Color]] = palette.get(tag, default_fill)
+        outline = default_outline
         if held is not None and 'heldBy' in body.userData:
             fill = held
         if locked is not None and 'lockedBy' in body.userData:
             fill = locked
         if len(body.fixtures) == 2:
+            assert(isinstance(fill, Color))
             fill = [fill, ramp_edge]
         draw_body(canvas, body, fill, outline)

@@ -9,9 +9,6 @@ from gym import spaces
 
 from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 
-#TODO factor this out into rendering module
-import pygame
-
 import masurvival.simulation as simulation
 import masurvival.worldgen as worldgen
 #TODO make this optional
@@ -74,25 +71,8 @@ class MaSurvivalEnv(gym.Env):
     metadata: Dict[str, Any] = {
         'render_modes': ['human', 'rgb_array'],
         'render_fps': 30}
-    _colors: Dict[str, rendering.Color] = {
-        'default': pygame.Color('gold'),
-        'held': pygame.Color('sienna1'),
-        'locked': pygame.Color('slateblue3'),
-        'ground': pygame.Color('white'),
-        'wall': pygame.Color('gray'),
-        'pillar': pygame.Color('gray'),
-        'agent': pygame.Color('cornflowerblue'),
-        'ramp': pygame.Color('white'),
-        'lidar_off': pygame.Color('gray'),
-        'lidar_on': pygame.Color('indianred2'),
-        'free_cell': pygame.Color('green'),
-        'full_cell': pygame.Color('red'),
-        'hand_on': pygame.Color('springgreen2'),
-        'hand_off': pygame.Color('gray'),
-        'ramp_edge': pygame.Color('red')}
-    _outline_colors: Dict[str, rendering.Color] = {
-        'default': pygame.Color('gray25'),}
     _window_size: int = 512
+    _palette: Optional[rendering.Palette] = None
     _canvas: Optional[rendering.Canvas] = None
 
     def __init__(self, simulation_substeps: int = 2,
@@ -238,29 +218,30 @@ class MaSurvivalEnv(gym.Env):
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if self._canvas is None:
+            self._palette = rendering.Palette()
             self._canvas = rendering.Canvas(
                 width=self._window_size, height=self._window_size, 
                 world_size=self._world_size, 
-                background=self._colors['ground'], render_mode=mode, 
+                background=self._palette['background'], render_mode=mode, 
                 surfaces=16, fps=self.metadata['render_fps'])
         self._canvas.clear()
+        palette = self._palette
         for i in range(self._spawn_grid_xs.shape[0]):
             x, y = self._spawn_grid_xs[i], self._spawn_grid_ys[i]
-            color = self._colors['full_cell']
+            color = palette['full_cell']
             if i in self._free_spawn_cells:
-                color = self._colors['free_cell']
+                color = palette['free_cell']
             self._canvas.draw_dot(b2Vec2(x,y), depth=0, color=color)
-        rendering.draw_world(self._canvas, self._world, self._colors, 
-                             self._outline_colors)
+        rendering.draw_world(self._canvas, self._world, palette)
         for i, agent in enumerate(self._agents):
             rendering.draw_lidar(
                 self._canvas, n_lasers=self._n_lasers, 
                 fov=self._lidar_angle, radius=self._lidar_depth, 
                 transform=agent.transform, scan=self._obs[i], 
-                on=self._colors['lidar_on'], off=self._colors['lidar_off'])
+                on=palette['lidar_on'], off=palette['lidar_off'])
             hand = agent.userData.get('holds', None)
-            hand_color = self._colors['hand_on'] if hand is not None \
-                         else self._colors['hand_off']
+            hand_color = palette['hand_on'] if hand is not None \
+                         else palette['hand_off']
             rendering.draw_laser(
               self._canvas, origin=agent.position, angle=agent.angle, 
               depth=self._hold_range, scan=None, on=hand_color, 
