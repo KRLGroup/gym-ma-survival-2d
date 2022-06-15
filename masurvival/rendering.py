@@ -2,7 +2,6 @@ from typing import Any, Callable, Optional, Union, Tuple, Dict, Set, List
 
 import numpy as np
 
-#TODO make this optional
 import pygame
 
 from Box2D import ( # type: ignore
@@ -23,6 +22,7 @@ ColorKey = \
 _default_color = Color('black')
 
 class Palette:
+
     colors: Dict[str, Color] = {
         'default': Color('gold'),
         'default_outline': Color('gray25'),
@@ -41,9 +41,11 @@ class Palette:
         'hand_off': Color('gray'),
         'ramp_edge': Color('red'),
         }
+
     def __init__(self, colors: Optional[Dict[str, Color]] = None):
         if colors is not None:
             self.colors = colors
+
     def get(self, key: ColorKey, default: Color = _default_color) -> Color:
         if isinstance(key, str):
             color = self.colors.get(key, None)
@@ -57,6 +59,7 @@ class Palette:
                 return color
             return self.colors.get('default', _default_color)
         return Color(key)
+
     def __getitem__(self, key: ColorKey) -> Color:
         return self.get(key)
 
@@ -76,6 +79,8 @@ class Canvas:
             self, width: int, height: int, world_size: float,
             background: Color, render_mode: str = 'human',
             surfaces: int = 16, fps: int = 30):
+        if render_mode not in ['human', 'rgb_array']:
+            raise ValueError(f'Invalid render mode "{render_mode}".')
         self.background = background
         self._render_mode = render_mode
         self._fps = fps
@@ -87,7 +92,7 @@ class Canvas:
             pygame.display.init()
             self._window = pygame.display.set_mode((width, height))
             self._clock = pygame.time.Clock()
-        elif render_mode == 'rgb_array':
+        else: # render_mode == 'rgb_array'
             self._window = pygame.Surface((width, height))
         self._surfaces = [pygame.Surface((width, height), pygame.SRCALPHA)
                           for _ in range(surfaces)]
@@ -104,19 +109,16 @@ class Canvas:
             else:
                 surface.fill(pygame.Color([0, 0, 0, 0]))
 
-    def render(self):
+    def render(self) -> np.ndarray:
         for surface in self._surfaces:
             self._window.blit(surface, surface.get_rect())
         if self._render_mode == 'human':
             pygame.event.pump()
             pygame.display.update()
-            self._clock.tick(self._fps)
-        elif self._render_mode == 'rgb_array':
-            pixels = pygame.surfarray.pixels3d(self._window)
-            transposed_img = np.array(pixels)
-            return np.transpose(transposed_img, axes=(1, 0, 2))
-        else:
-            assert False, 'How did we get here?'
+            self._clock.tick(self._fps) # type: ignore
+        pixels = pygame.surfarray.pixels3d(self._window)
+        transposed_img = np.array(pixels)
+        return np.transpose(transposed_img, axes=(1, 0, 2))
 
     def draw_segment(
             self, a: b2Vec2, b: b2Vec2, depth: int, color: Color,
@@ -206,18 +208,12 @@ def draw_laser(
         elevation: int = 15):
     is_on = scan is not None
     color = on if is_on else off
-    length = depth
-    if is_on:
-        # Make mypy happy :|
-        assert(scan is not None)
-        length = scan[1]
+    length = depth if not is_on else scan[1] # type: ignore
     endpoint = origin + geo.from_polar(length=length, angle=angle)
     canvas.draw_segment(a=origin, b=endpoint, depth=elevation, color=color)
     if is_on:
-        # Make mypy happy :|
-        assert(scan is not None)
-        draw_body(canvas, scan[0].body, fill=None, outline=on, 
-                  elevation=elevation)
+        body = scan[0].body # type: ignore
+        draw_body(canvas, body, fill=None, outline=on, elevation=elevation)
 
 def draw_lidar(
         canvas: Canvas, n_lasers: int, fov: float, radius: float,

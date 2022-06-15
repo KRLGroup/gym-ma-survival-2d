@@ -4,7 +4,7 @@ A Multi-Agent Reinforcement Learning survival environment in 2D with a OpenAI
 Gym interface. This is not a proper Python package yet; source code is in the 
 `masurvival` directory.
 
-![Demo GIF](https://github.com/KRLGroup/gym-ma-survival-2d/random_policy.gif)
+![Random policy demo GIF](demo_gifs/random_policy.gif)
 
 ## Environment description
 

@@ -1,3 +1,5 @@
+from typing import Optional, List
+
 import numpy as np
 import gym
 import pygame
@@ -35,26 +37,50 @@ E: lock/unlock closest valid object in range
 -------------
 """
 
-def main():
+def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
     env = MaSurvivalEnv(n_agents=4)
     print(controls_doc)
     env.reset()
-    env.render(mode='human')
+    frames: List[np.ndarray] = []
+    frame = env.render(mode='human')
+    if gif_fpath is not None:
+        frames.append(frame)
     done = False
     pressed = pygame.key.get_pressed()
-    while not done:
-        actions = list(env.action_space.sample())
-        actions[0], pressed = get_action_from_keyboard(pressed)
-        actions = tuple(actions)
+    for i in range(1000):
+        actions = env.action_space.sample()
+        user_action, pressed = get_action_from_keyboard(pressed)
+        actions = (user_action,) + actions[1:]
         action = actions
         #print(f'action: {action}')
         observation, reward, done, info = env.step(action)
-        env.render(mode='human')
+        frame = env.render(mode='human')
+        if gif_fpath is not None and (i+1) % record_interval == 0:
+            frames.append(frame)
         #print(f'observation = {observation}')
     print(f'done')
     env.close()
+    if gif_fpath is not None:
+        import imageio
+        from pygifsicle import optimize # type: ignore
+        with imageio.get_writer(gif_fpath, mode='I') as writer:
+            for frame in frames:
+                writer.append_data(frame)
+        optimize(gif_fpath)
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-r", "--record-gif", dest='gif_fpath',
+      type=str, default=None,
+      help="record a GIF to the given file")
+    parser.add_argument("--record-interval", dest='record_interval',
+      type=int, default=10,
+      help="only record frames each N environment steps")
+    args = parser.parse_args()
+    return args
 
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(gif_fpath=args.gif_fpath, record_interval=args.record_interval)
 

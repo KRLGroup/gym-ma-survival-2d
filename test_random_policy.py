@@ -1,53 +1,61 @@
-from typing import Optional
+from typing import Optional, List
 import time
 
+import numpy as np
 import gym
 
 from masurvival.envs.masurvival_env import MaSurvivalEnv
 
-def main(render_mode: Optional[str]):
+def main(render_mode: Optional[str], gif_fpath: Optional[str] = None,
+         record_interval: int = 10):
     env = MaSurvivalEnv()
     print(env.action_space)
     print(env.observation_space)
     env.reset()
-    frames = []
+    frames: List[np.ndarray] = []
     if render_mode is not None:
-        frames.append(env.render(mode=render_mode))
+        frame = env.render(mode=render_mode)
+        if gif_fpath is not None:
+            frames.append(frame)
     done = False
     start = time.time()
-    for _ in range(1000):
+    for i in range(1000):
         action = env.action_space.sample()
         #print(f'action = {action}')
         observation, reward, done, info = env.step(action)
         if render_mode is not None:
-            frames.append(env.render(mode=render_mode))
+            frame = env.render(mode=render_mode)
+            if gif_fpath is not None and (i+1) % record_interval == 0:
+                frames.append(frame)
         #print(f'observation = {observation}')
     end = time.time()
     print(f'avg step time: {(end - start)/1000.}')
     print(f'done')
     env.close()
-    if render_mode == 'rgb_array':
-        fpath = './random_policy.gif'
-        keep_interval = 10
+    if gif_fpath is not None:
         import imageio
         from pygifsicle import optimize # type: ignore
-        with imageio.get_writer(fpath, mode='I') as writer:
-            for i, frame in enumerate(frames):
-                if i % keep_interval == 0:
-                    writer.append_data(frame)
-        optimize(fpath)
+        with imageio.get_writer(gif_fpath, mode='I') as writer:
+            for frame in frames:
+                writer.append_data(frame)
+        optimize(gif_fpath)
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--render-mode", dest='render_mode',
+      type=str, choices=['human', 'rgb_array'], default='rgb_array',
+      help="render mode to use")
+    parser.add_argument("-r", "--record-gif", dest='gif_fpath',
+      type=str, default=None,
+      help="record a GIF to the given file")
+    parser.add_argument("--record-interval", dest='record_interval',
+      type=int, default=10,
+      help="only record frames each N environment steps")
+    args = parser.parse_args()
+    return args
 
 if __name__ == '__main__':
-    import sys
-    if len(sys.argv) > 3:
-        raise ValueError('Too many command line arguments')
-    def_render_mode = 'human'
-    render_mode = None
-    if len(sys.argv) > 1:
-        if sys.argv[1] != '--render':
-            raise ValueError(f'Invalid command line argument')
-        render_mode = def_render_mode
-    if len(sys.argv) > 2:
-        render_mode = sys.argv[2]
-    main(render_mode=render_mode)
+    args = parse_args()
+    main(render_mode=args.render_mode, gif_fpath=args.gif_fpath,
+         record_interval=args.record_interval)

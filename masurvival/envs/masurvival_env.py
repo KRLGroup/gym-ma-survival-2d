@@ -215,7 +215,9 @@ class MaSurvivalEnv(gym.Env):
             radius=self._lidar_depth)
         return lidar_scan
 
-    def render(self, mode: str = 'human') -> Optional[np.ndarray]:
+    # Ignores the render mode after the first call. TODO change that
+    # Always returns the rendered frame, even with 'human' mode.
+    def render(self, mode: str = 'human') -> np.ndarray:
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if self._canvas is None:
@@ -226,9 +228,7 @@ class MaSurvivalEnv(gym.Env):
                 background=self._palette['background'], render_mode=mode, 
                 surfaces=16, fps=self.metadata['render_fps'])
         self._canvas.clear()
-        palette = self._palette
-        # Make mypy happy :|
-        assert(isinstance(palette, rendering.Palette))
+        palette: rendering.Palette = self._palette # type: ignore
         for i in range(self._spawn_grid_xs.shape[0]):
             x, y = self._spawn_grid_xs[i], self._spawn_grid_ys[i]
             color = palette['full_cell']
