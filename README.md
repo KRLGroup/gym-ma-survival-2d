@@ -8,10 +8,11 @@ Gym interface. This is not a proper Python package yet; source code is in the
 
 ## Environment description
 
-For now the semantics are almost the same as the
-`hide-and-seek-environment-2d-version`: agents are circles which can move as 
-unicycles and observe the environment with LIDAR sensors. They can also grab 
-specific objects and lock/unlock them.
+TODO
+
+### Specifications
+
+TODO
 
 ## Dependencies
 

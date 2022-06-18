@@ -44,7 +44,7 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--render-mode", dest='render_mode',
-      type=str, choices=['human', 'rgb_array'], default='rgb_array',
+      type=str, choices=['human', 'rgb_array'], default=None,
       help="render mode to use")
     parser.add_argument("-r", "--record-gif", dest='gif_fpath',
       type=str, default=None,
