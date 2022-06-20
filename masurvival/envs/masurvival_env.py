@@ -10,10 +10,9 @@ from gym import spaces
 from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 
 import masurvival.simulation as sim
-import masurvival.worldgen as worldgen
 from masurvival.semantics import (
-    ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, Health, 
-    Melee)
+    SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
+    Health, Melee, Item, item_prototype, Inventory)
 
 
 AgentObservation = List[sim.LaserScan]
@@ -42,10 +41,6 @@ default_config: Config = {
         'impulse': (0.5, 0.5, 0.025),
         'drift': False,
     },
-    'boxes': {
-        'n_boxes': 2,
-        'box_size': 1,
-    },
     'health': {
         'health': 10,
     },
@@ -53,6 +48,17 @@ default_config: Config = {
         'range': 2,
         'damage': 1,
         'drift': True, # so that we can actually render actions
+    },
+    'boxes': {
+        'n_boxes': 2,
+        'box_size': 1,
+    },
+    'items': {
+        'n_items': 3,
+        'item_size': 0.5,
+    },
+    'inventory': {
+        'range': 1,
     },
 }
 
@@ -71,6 +77,7 @@ class MaSurvivalEnv(gym.Env):
     canvas: Optional[Any] = None
     # internal state
     simulation: sim.Simulation
+    spawner: SpawnGrid
 
     def __init__(self, config: Optional[Config] = None):
         if config is not None:
@@ -88,24 +95,34 @@ class MaSurvivalEnv(gym.Env):
         motor_config = self.config['motors']
         health_config = self.config['health']
         melee_config = self.config['melee']
-        self.spawner = worldgen.SpawnGrid(**spawn_grid_config)
+        inventory_config = self.config['inventory']
+        self.spawner = SpawnGrid(**spawn_grid_config)
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
             sim.Lidars(**lidar_config),
             sim.DynamicMotors(**motor_config),
             Health(**health_config),
-            Melee(**melee_config)]
+            Melee(**melee_config),
+            Inventory(**inventory_config)]
         boxes_config = self.config['boxes']
         box_size = boxes_config.pop('box_size')
         boxes_config['prototype'] = box_prototype(box_size)
         boxes_config['n_spawns'] = boxes_config.pop('n_boxes')
         boxes_modules = [
             ResetSpawns(spawner=self.spawner, **boxes_config),]
+        items_config = self.config['items']
+        item_size = items_config.pop('item_size')
+        items_config['prototype'] = item_prototype(item_size)
+        items_config['n_spawns'] = items_config.pop('n_items')
+        items_modules = [
+            ResetSpawns(spawner=self.spawner, **items_config),
+            Item()]
         agents = sim.Group(agents_modules)
         boxes = sim.Group(boxes_modules)
+        items = sim.Group(items_modules)
         room_size = spawn_grid_config['floor_size']
         walls = sim.Group([ThickRoomWalls(room_size)])
-        self.simulation = sim.Simulation(groups=[agents, boxes, walls])
+        self.simulation = sim.Simulation(groups=[agents, boxes, items, walls])
 
     # if given, the seed takes precedence over the config seed
     def reset(self, seed: int = None, return_info: bool = False,
@@ -117,6 +134,7 @@ class MaSurvivalEnv(gym.Env):
         super().reset(seed=seed)
         self.rng = np.random.default_rng(seed=seed)
         self.spawner.rng = self.rng
+        self.spawner.reset()
         self.simulation.reset()
         obs = self.fetch_observations(self.simulation.groups[0])
         info: Dict = {}
@@ -124,7 +142,7 @@ class MaSurvivalEnv(gym.Env):
 
     def step(self, action: Action) -> Tuple[Observation, float, bool, Dict]:
         assert self.action_space.contains(action), "Invalid action."
-        agents, boxes, walls = self.simulation.groups
+        agents, boxes, items, walls = self.simulation.groups
         self.queue_actions(agents, action)
         self.simulation.step()
         obs = self.fetch_observations(agents)
@@ -140,7 +158,7 @@ class MaSurvivalEnv(gym.Env):
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if self.canvas is None:
-            agents, boxes, walls = self.simulation.groups
+            agents, boxes, items, walls = self.simulation.groups
             views = {
                 agents: [
                     rendering.Bodies(
@@ -153,6 +171,10 @@ class MaSurvivalEnv(gym.Env):
                         **rendering.melee_view_config), # type: ignore
                 ],
                 boxes: [
+                    rendering.Bodies(
+                        **rendering.bodies_view_config), # type: ignore
+                ],
+                items: [
                     rendering.Bodies(
                         **rendering.bodies_view_config), # type: ignore
                 ],

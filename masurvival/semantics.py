@@ -7,7 +7,6 @@ from Box2D import ( # type: ignore
 import numpy as np
 
 import masurvival.simulation as sim
-import masurvival.worldgen as worldgen
 
 
 def agent_prototype(agent_size: float) -> sim.Prototype:
@@ -18,18 +17,50 @@ def box_prototype(box_size: float) -> sim.Prototype:
     shape = sim.rect_shape(width=box_size, height=box_size)
     return sim.Prototype(shape=shape)
 
+def item_prototype(item_size: float):
+    return sim.Prototype(sim.circle_shape(item_size/2), sensor=True)
+
+
+# astract interface
+class Spawner:
+    def reset(self):
+        pass
+    def placements(self, n: int) -> List[b2Vec2]:
+        return []
+
+class SpawnGrid(Spawner):
+
+    grid_size: int
+    floor_size: float
+    rng: np.random.Generator
+    positions: List[b2Vec2]
+    occupied: List[b2Vec2]
+    
+    def __init__(self, grid_size: int, floor_size: float):
+        self.grid_size = grid_size
+        self.floor_size = floor_size
+    
+    def reset(self):
+        self.positions = square_grid(self.grid_size, self.floor_size)
+        self.occupied = []
+        self.rng.shuffle(self.positions)
+    
+    def placements(self, n: int) -> List[b2Vec2]:
+        occupied = [self.positions.pop() for _ in range(n)]
+        self.occupied += occupied
+        return occupied
+
+
 # spawns N bodies with given prototype on world reset
 class ResetSpawns(sim.Module):
     
     def __init__(
-            self, n_spawns: int, prototype: sim.Prototype,
-            spawner: worldgen.Spawner):
+            self, n_spawns: int, prototype: sim.Prototype, spawner: Spawner):
         self.n_spawns = n_spawns
         self.prototypes = [prototype]*self.n_spawns
         self.spawner = spawner
     
     def post_reset(self, group: sim.Group):
-        self.spawner.reset()
         group.spawn(self.prototypes, self.spawner.placements(self.n_spawns))
 
 # spawns 4 immovable, thick walls enclosing a room of given size
@@ -131,5 +162,44 @@ class Melee(sim.Module):
         healths = sim.Group.body_modules(target).get(Health, [])
         for health in healths:
             health.damage(target, damage) # type: ignore
+
+# marks bodies in its group as items (can be picked up by inventories)
+class Item(sim.Module):
+    pass
+
+# an inventory with automatic pickup of items in an AABB range around the 
+# bodies of the group
+class Inventory(sim.Module):
+
+    range: float
+
+    def __init__(self, range: float):
+        self.range = range
+
+    def post_step(self, group: sim.Group):
+        r = self.range
+        fixturess = [sim.aabb_query(group.world, body.position, r, r)
+                     for body in group.bodies]
+        candidatess = [[f.body for f in fixtures] for fixtures in fixturess]
+        for body, candidates in zip(group.bodies, candidatess):
+            for candidate in candidates:
+                self._try_pickup(body, candidate)
+
+    def _try_pickup(self, body: b2Body, candidate: b2Body):
+        group = sim.Group.body_group(candidate)
+        items = group.modules.get(Item, [])
+        #TODO properly pick up the item instead of just despawning it
+        if len(items) > 0:
+            group.despawn([candidate])
+
+
+# utilties
+
+def square_grid(grid_size: int, floor_size: float) -> List[b2Vec2]:
+    centers = np.arange(grid_size)/grid_size + 0.5/grid_size
+    centers = floor_size*centers - floor_size/2.
+    ii = np.arange(grid_size**2) % grid_size
+    jj = np.arange(grid_size**2) // grid_size
+    return [b2Vec2(centers[i], centers[j]) for i, j in zip(ii, jj)]
 
 

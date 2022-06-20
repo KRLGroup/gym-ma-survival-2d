@@ -1,10 +1,7 @@
 from typing import Type, Sequence, Optional, Tuple, List, Callable, Any, Dict, Union, NamedTuple
 
 from Box2D import ( # type: ignore
-    b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, 
-    b2CircleShape,
-    b2PolygonShape, b2Joint, b2RayCastCallback, b2Vec2, b2Mat22, b2Transform, 
-    b2_staticBody, b2_dynamicBody)
+    b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, b2CircleShape, b2PolygonShape, b2Joint, b2RayCastCallback, b2Vec2, b2Mat22, b2Transform, b2_staticBody, b2_dynamicBody, b2AABB, b2QueryCallback)
 
 
 # basic geometry
@@ -280,6 +277,14 @@ def laser_scan(world: b2World, start: Vec2, end: Vec2) -> LaserScan:
     assert(raycast.fixture is not None)
     return raycast.fixture, depth
 
+def aabb_query(world: b2World, center: b2Vec2, width: float, height: float) -> List[b2Fixture]:
+    lo = b2Vec2(center[0] - width/2, center[1] - height)
+    hi = b2Vec2(center[0] + width/2, center[1] + height)
+    aabb = b2AABB(lowerBound=lo, upperBound=hi)
+    callback = AllQueryCallback()
+    world.QueryAABB(callback, aabb)
+    return callback.fixtures
+
 # utiltiy class from https://github.com/pybox2d/pybox2d/wiki/manual#ray-casts
 # only retains the closest fixture found by the ray cast
 class LaserRayCastCallback(b2RayCastCallback):
@@ -296,3 +301,14 @@ class LaserRayCastCallback(b2RayCastCallback):
         self.normal = b2Vec2(normal)
         self.relative_depth = fraction
         return fraction
+
+# detects all fixtures in an AABB region (inspired from https://github.com/pybox2d/pybox2d/wiki/manual#exploring-the-world)
+class AllQueryCallback(b2QueryCallback):
+    fixtures: List[b2Fixture]
+    def __init__(self):
+        self.fixtures = []
+        b2QueryCallback.__init__(self)
+    def ReportFixture(self, fixture):
+        self.fixtures.append(fixture)
+        return True
+
