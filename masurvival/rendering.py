@@ -3,6 +3,7 @@ from typing import Any, Callable, Optional, Union, Tuple, Dict, Set, List
 import numpy as np
 
 import pygame
+import pygame.freetype
 
 from Box2D import ( # type: ignore
     b2World, b2Body, b2CircleShape, b2PolygonShape, b2EdgeShape, b2Vec2, 
@@ -11,7 +12,12 @@ from Box2D import ( # type: ignore
 import masurvival.simulation as sim
 import masurvival.semantics as sem
 
+pygame.freetype.init()
+
 Color = pygame.Color
+Font = pygame.freetype.Font
+
+default_font = pygame.freetype.SysFont('Roboto', size=12)
 
 background = Color('white')
 
@@ -56,6 +62,9 @@ melee_view_config = {
     'layer': 1,
 }
 
+inventory_view_config = {
+}
+
 
 # each view should draw one aspect of the group (e.g. a module)
 #TODO actually, these could very well be sim.Module's?
@@ -69,6 +78,7 @@ class Canvas:
     fps: int
     to_screen: b2Transform
     scale: b2Mat22
+    topleft: b2Vec2 # the top left corner of the canvas in world coords
     surfaces: List[pygame.surface.Surface]
     window: pygame.surface.Surface
     clock: Optional[pygame.time.Clock] = None
@@ -85,6 +95,7 @@ class Canvas:
         self.render_mode = render_mode
         self.fps = fps
         self.background = background
+        self.topleft = b2Vec2(-world_size/2, world_size/2)
         self.to_screen = b2Transform()
         self.to_screen.Set(position=(width/2., height/2.), angle=0.0)
         self.scale = b2Mat22(width/world_size, 0., 0., -height/world_size)
@@ -124,6 +135,15 @@ class Canvas:
         pixels = pygame.surfarray.pixels3d(self.window)
         transposed_img = np.array(pixels)
         return np.transpose(transposed_img, axes=(1, 0, 2))
+
+    def draw_text(
+            self, text: str, position: sim.Vec2, font: Font = default_font, 
+            foreground: Optional[Color] = None,
+            background: Optional[Color] = None, layer: int = 0):
+        surface = self.surfaces[layer]
+        p = self.to_screen*(self.scale*position)
+        font.render_to(
+            surface, p, text, fgcolor=foreground, bgcolor=background)
 
     def draw_segment(
             self, a: b2Vec2, b: b2Vec2, color: Color, layer: int = 0, 
@@ -246,8 +266,7 @@ class Lidars(View):
         self.layer = layer
 
     def draw(self, canvas, group: sim.Group):
-        for lidars in group.modules[sim.Lidars]:
-            assert(isinstance(lidars, sim.Lidars))
+        for lidars in group.get(sim.Lidars):
             for origin, endpoints, scan \
             in zip(lidars.origins, lidars.endpoints, lidars.scans):
                 self._draw_lidar(canvas, origin, endpoints, scan)
@@ -268,6 +287,34 @@ class Lidars(View):
             canvas.draw_fixture(
                 fixture, transform, self.fill, self.outline, self.layer)
 
+
+# display inventories on the top left of the screen
+class Inventory(View):
+    
+    font: Font
+    foreground: Optional[Color]
+    background: Optional[Color]
+    layer: int
+    offset: b2Vec2
+    
+    def __init__(
+            self, font: Font = default_font,
+            foreground: Optional[Color] = None,
+            background: Optional[Color] = None, layer: int = 0):
+        self.font = font
+        self.foreground = foreground
+        self.background = background
+        self.layer = layer
+        self.offset = b2Vec2(0.5, 0.5)
+    
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.get(sem.Inventory):
+            for body, inv in m.inventories.items():
+                canvas.draw_text(
+                    f'{len(inv)}', body.position + self.offset, self.font, 
+                    self.foreground, self.background, self.layer)
+ 
+
 class Health(View):
 
     offset: b2Vec2
@@ -284,8 +331,7 @@ class Health(View):
         self.layer = layer
 
     def draw(self, canvas: Canvas, group: sim.Group):
-        for module in group.modules[sem.Health]:
-            assert(isinstance(module, sem.Health))
+        for module in group.get(sem.Health):
             for body, health in module.healths.items():
                 self._draw_health(body, health, canvas)
 
@@ -316,8 +362,7 @@ class Melee(View):
         self.layer = layer
     
     def draw(self, canvas: Canvas, group: sim.Group):
-        for m in group.modules[sem.Melee]:
-            assert(isinstance(m, sem.Melee))
+        for m in group.get(sem.Melee):
             for a, b, attack, target \
             in zip(m.origins, m.endpoints, m.attacks, m.targets):
                 self._draw_melee(a, b, attack, target, canvas)
@@ -331,3 +376,5 @@ class Melee(View):
         if target is None or not attack:
             return
         canvas.draw_body(target, self.fill, self.outline, self.layer)
+           
+

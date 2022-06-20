@@ -9,6 +9,8 @@ import numpy as np
 import masurvival.simulation as sim
 
 
+# prototype for various bodies
+
 def agent_prototype(agent_size: float) -> sim.Prototype:
     shape = sim.circle_shape(radius=agent_size/2)
     return sim.Prototype(shape=shape)
@@ -18,8 +20,10 @@ def box_prototype(box_size: float) -> sim.Prototype:
     return sim.Prototype(shape=shape)
 
 def item_prototype(item_size: float):
-    return sim.Prototype(sim.circle_shape(item_size/2), sensor=True)
+    return sim.Prototype(sim.circle_shape(radius=item_size/2))
 
+
+# random spawning
 
 # astract interface
 class Spawner:
@@ -50,7 +54,6 @@ class SpawnGrid(Spawner):
         self.occupied += occupied
         return occupied
 
-
 # spawns N bodies with given prototype on world reset
 class ResetSpawns(sim.Module):
     
@@ -62,6 +65,9 @@ class ResetSpawns(sim.Module):
     
     def post_reset(self, group: sim.Group):
         group.spawn(self.prototypes, self.spawner.placements(self.n_spawns))
+
+
+# bodies with fixed placement (e.g. room walls)
 
 # spawns 4 immovable, thick walls enclosing a room of given size
 class ThickRoomWalls(sim.Module):
@@ -84,6 +90,85 @@ class ThickRoomWalls(sim.Module):
     def post_reset(self, group: sim.Group):
         group.spawn(self.prototypes, self.placements)
 
+
+# items and inventories
+
+# marks bodies in its group as items (they are immaterial and can be picked up 
+# by inventories); does nothing on use, so that subclasses can simply 
+# implement the use method for new types of items
+class Item(sim.Module):
+    def post_spawn(self, bodies: List[b2Body]):
+        for body in bodies:
+            for fixture in body.fixtures:
+                fixture.sensor = True
+    def use(self, user: b2Body):
+        pass
+
+# an inventory with automatic pickup of items in an AABB range around the 
+# bodies of the group; beware that bodies which have more than 1 associated 
+# item are only picked up if all the associated items can be picked up at once
+class Inventory(sim.Module):
+
+    slots: int
+    range: float
+    drift: bool
+    inventories: Dict[b2Body, List[Item]]
+    uses: List[bool]
+
+    def __init__(self, slots: int, range: float, drift: bool = False):
+        self.range = range
+        self.slots = slots
+        self.drift = drift
+
+    def post_reset(self, group: sim.Group):
+        self.uses = []
+
+    def post_spawn(self, bodies: List[b2Body]):
+        if not hasattr(self, 'inventories'):
+            self.inventories = {}
+        for body in bodies:
+            self.inventories[body] = []
+
+    def pre_despawn(self, bodies: List[b2Body]):
+        for body in bodies:
+            del self.inventories[body]
+
+    def pre_step(self, group: sim.Group):
+        missing = len(group.bodies) - len(self.uses)
+        if missing > 0:
+            self.uses += [False]*missing
+        for (body, inventory), use \
+        in zip(self.inventories.items(), self.uses):
+            if not use:
+                continue
+            item: Item
+            try:
+                item = inventory.pop()
+            except:
+                continue
+            item.use(body)
+        if not self.drift:
+            self.uses = []
+
+    def post_step(self, group: sim.Group):
+        r = self.range
+        fixturess = [sim.aabb_query(group.world, body.position, r, r)
+                     for body in group.bodies]
+        candidatess = [[f.body for f in fixtures] for fixtures in fixturess]
+        for body, candidates in zip(group.bodies, candidatess):
+            inventory = self.inventories[body]
+            for candidate in candidates:
+                items = sim.Group.body_group(candidate).get(Item)
+                if len(items) <= 0:
+                    continue
+                if len(items) + len(inventory) > self.slots:
+                    continue
+                inventory += items # type: ignore
+                sim.Group.despawn_body(candidate)
+
+
+# health, attacks, healing
+
 # gives health to all bodies in its group and kills them when their health <= 
 # 0
 class Health(sim.Module):
@@ -96,10 +181,11 @@ class Health(sim.Module):
         self.health = health
 
     def post_reset(self, group: sim.Group):
+        #TODO do this in post_spawn if attr is not set yet
         self.healths = {body: self.health for body in group.bodies}
 
     def post_step(self, group: sim.Group):
-        #TODO maybe optimize this by keeping the data in body.userData?
+        #TODO do this in post_spawn
         for body in group.bodies:
             if body not in self.healths:
                 self.healths[body] = self.health
@@ -118,7 +204,7 @@ class Health(sim.Module):
     def heal(self, body: b2Body, healing: int):
         if body not in self.healths:
             return
-        self.healths[body] -= healing
+        self.healths[body] += healing
 
 # gives an short-range attack that damages the target (if it has an health 
 # module)
@@ -159,38 +245,20 @@ class Melee(sim.Module):
         self.targets = [scan and scan[0].body for scan in scans]
 
     def _attack(self, target: b2Body, damage: int):
-        healths = sim.Group.body_modules(target).get(Health, [])
+        healths = sim.Group.body_group(target).get(Health)
         for health in healths:
             health.damage(target, damage) # type: ignore
 
-# marks bodies in its group as items (can be picked up by inventories)
-class Item(sim.Module):
-    pass
+# heals the target by the specified amount of health
+class Heal(Item):
 
-# an inventory with automatic pickup of items in an AABB range around the 
-# bodies of the group
-class Inventory(sim.Module):
+    def __init__(self, healing: int):
+        self.healing = healing
 
-    range: float
-
-    def __init__(self, range: float):
-        self.range = range
-
-    def post_step(self, group: sim.Group):
-        r = self.range
-        fixturess = [sim.aabb_query(group.world, body.position, r, r)
-                     for body in group.bodies]
-        candidatess = [[f.body for f in fixtures] for fixtures in fixturess]
-        for body, candidates in zip(group.bodies, candidatess):
-            for candidate in candidates:
-                self._try_pickup(body, candidate)
-
-    def _try_pickup(self, body: b2Body, candidate: b2Body):
-        group = sim.Group.body_group(candidate)
-        items = group.modules.get(Item, [])
-        #TODO properly pick up the item instead of just despawning it
-        if len(items) > 0:
-            group.despawn([candidate])
+    def use(self, user: b2Body):
+        healths = sim.Group.body_group(user).get(Health)
+        for health in healths:
+            health.heal(user, self.healing) # type: ignore
 
 
 # utilties

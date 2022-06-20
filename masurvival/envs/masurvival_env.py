@@ -12,12 +12,12 @@ from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
-    Health, Melee, Item, item_prototype, Inventory)
+    Health, Heal, Melee, Item, item_prototype, Inventory)
 
 
 AgentObservation = List[sim.LaserScan]
 Observation = Tuple[AgentObservation, ...]
-AgentAction = Tuple[int, int, int, int]
+AgentAction = Tuple[int, int, int, int, int]
 Action = Tuple[AgentAction, ...]
 
 Config = Dict[str, Dict[str, Any]]
@@ -53,12 +53,18 @@ default_config: Config = {
         'n_boxes': 2,
         'box_size': 1,
     },
-    'items': {
-        'n_items': 3,
-        'item_size': 0.5,
+    'heals': {
+        'reset_spawns': {
+            'n_items': 3,
+            'item_size': 0.5,
+        },
+        'heal': {
+            'healing': 5,
+        },
     },
     'inventory': {
-        'range': 1,
+        'slots': 4,
+        'range': 0.5,
     },
 }
 
@@ -67,7 +73,7 @@ class MaSurvivalEnv(gym.Env):
     # See the default values for available params
     config: Dict[str, Any] = default_config
     # actions and observation spaces
-    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,3,2])
+    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,3,2,2])
     action_space: spaces.Space # changes based on number of agents
     observation_space: spaces.Space = NotImplemented
     # rendering
@@ -110,19 +116,22 @@ class MaSurvivalEnv(gym.Env):
         boxes_config['n_spawns'] = boxes_config.pop('n_boxes')
         boxes_modules = [
             ResetSpawns(spawner=self.spawner, **boxes_config),]
-        items_config = self.config['items']
-        item_size = items_config.pop('item_size')
-        items_config['prototype'] = item_prototype(item_size)
-        items_config['n_spawns'] = items_config.pop('n_items')
-        items_modules = [
-            ResetSpawns(spawner=self.spawner, **items_config),
-            Item()]
+        heals_config = self.config['heals']
+        heals_spawn_config = heals_config['reset_spawns']
+        heals_heal_config = heals_config['heal']
+        heal_size = heals_spawn_config.pop('item_size')
+        heals_spawn_config['prototype'] = item_prototype(heal_size)
+        heals_spawn_config['n_spawns'] = heals_spawn_config.pop('n_items')
+        heals_modules = [
+            ResetSpawns(spawner=self.spawner, **heals_spawn_config),
+            Heal(**heals_heal_config),]
+            #Item(),]
         agents = sim.Group(agents_modules)
         boxes = sim.Group(boxes_modules)
-        items = sim.Group(items_modules)
+        heals = sim.Group(heals_modules)
         room_size = spawn_grid_config['floor_size']
         walls = sim.Group([ThickRoomWalls(room_size)])
-        self.simulation = sim.Simulation(groups=[agents, boxes, items, walls])
+        self.simulation = sim.Simulation(groups=[agents, boxes, heals, walls])
 
     # if given, the seed takes precedence over the config seed
     def reset(self, seed: int = None, return_info: bool = False,
@@ -142,7 +151,7 @@ class MaSurvivalEnv(gym.Env):
 
     def step(self, action: Action) -> Tuple[Observation, float, bool, Dict]:
         assert self.action_space.contains(action), "Invalid action."
-        agents, boxes, items, walls = self.simulation.groups
+        agents, boxes, heals, walls = self.simulation.groups
         self.queue_actions(agents, action)
         self.simulation.step()
         obs = self.fetch_observations(agents)
@@ -158,7 +167,7 @@ class MaSurvivalEnv(gym.Env):
         if mode not in self.metadata['render_modes']:
             raise ValueError(f'Unsupported render mode: {mode}')
         if self.canvas is None:
-            agents, boxes, items, walls = self.simulation.groups
+            agents, boxes, heals, walls = self.simulation.groups
             views = {
                 agents: [
                     rendering.Bodies(
@@ -169,12 +178,14 @@ class MaSurvivalEnv(gym.Env):
                         **rendering.health_view_config), # type: ignore
                     rendering.Melee(
                         **rendering.melee_view_config), # type: ignore
+                    rendering.Inventory(
+                        **rendering.inventory_view_config), # type: ignore
                 ],
                 boxes: [
                     rendering.Bodies(
                         **rendering.bodies_view_config), # type: ignore
                 ],
-                items: [
+                heals: [
                     rendering.Bodies(
                         **rendering.bodies_view_config), # type: ignore
                 ],
@@ -196,10 +207,11 @@ class MaSurvivalEnv(gym.Env):
             self.canvas.close()
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
-        return tuple(agents.modules[sim.Lidars][0].scans) # type: ignore
+        return tuple(agents.get(sim.Lidars)[0].scans) # type: ignore
     
     def queue_actions(self, agents: sim.Group, actions: Action):
         d = [0., 1., -1.]
         controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
-        agents.modules[sim.DynamicMotors][0].controls = controls # type: ignore
-        agents.modules[Melee][0].attacks = [bool(a[3]) for a in actions] # type: ignore
+        agents.get(sim.DynamicMotors)[0].controls = controls
+        agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
+        agents.get(Inventory)[0].uses = [bool(a[4]) for a in actions]

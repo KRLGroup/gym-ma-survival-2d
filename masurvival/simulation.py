@@ -1,7 +1,13 @@
-from typing import Type, Sequence, Optional, Tuple, List, Callable, Any, Dict, Union, NamedTuple
+from typing import Type, TypeVar, Sequence, Optional, Tuple, List, Callable, Any, Dict, Union, NamedTuple
 
 from Box2D import ( # type: ignore
-    b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, b2CircleShape, b2PolygonShape, b2Joint, b2RayCastCallback, b2Vec2, b2Mat22, b2Transform, b2_staticBody, b2_dynamicBody, b2AABB, b2QueryCallback)
+    b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, 
+    b2CircleShape, b2PolygonShape, b2Joint, b2RayCastCallback, b2Vec2, 
+    b2Mat22, b2Transform, b2_staticBody, b2_dynamicBody, b2AABB, 
+    b2QueryCallback)
+
+
+_T = TypeVar('_T')
 
 
 # basic geometry
@@ -84,61 +90,51 @@ Placement = Union[Vec3, Vec2]
 class Group:
 
     bodies: List[b2Body]
-    modules: Dict[Type, List[Module]]
+    modules: List[Module]
     world: b2World
 
     @staticmethod
     def body_group(body: b2Body) -> 'Group':
         return body.userData
 
+    # this is less efficient than self.despawn, so use that if possible
     @staticmethod
-    def body_modules(body: b2Body) -> Dict[Type, List[Module]]:
-        return Group.body_group(body).modules
+    def despawn_body(body: b2Body):
+        Group.body_group(body).despawn([body])
 
     def __init__(self, modules: Sequence[Module] = []):
         self.bodies = []
-        self.modules = {}
-        self.add_modules(modules)
-    
-    def add_modules(self, modules: Sequence[Module]):
-        [self.add_module(module) for module in modules]
-    
-    def add_module(self, module: Module):
-        type_ = type(module)
-        if type_ not in self.modules:
-            self.modules[type_] = []
-        self.modules[type_].append(module)
+        self.modules = []
+        self.modules += modules
+
+    def get(self, type_: Type[_T]) -> List[_T]:
+        return [m for m in self.modules if isinstance(m, type_)]
 
     def reset(self, world: b2World):
         #TODO destroy all bodies in the previous world?
         self.world = world
         self.bodies = []
-        for modules in self.modules.values():
-            for module in modules:
-                module.post_reset(self)
+        for module in self.modules:
+            module.post_reset(self)
 
     def pre_step(self):
-        for modules in self.modules.values():
-            for module in modules:
-                module.pre_step(self)
+        for module in self.modules:
+            module.pre_step(self)
 
     def post_step(self):
-        for modules in self.modules.values():
-            for module in modules:
-                module.post_step(self)
+        for module in self.modules:
+            module.post_step(self)
 
     def spawn(self, prototypes: List[Prototype], placements: List[Placement]):
         bodies = [self._create_body(proto, pos)
                   for proto, pos in zip(prototypes, placements)]
-        for modules in self.modules.values():
-            for module in modules:
-                module.post_spawn(bodies)
+        for module in self.modules:
+            module.post_spawn(bodies)
         self.bodies += bodies
 
     def despawn(self, bodies: List[b2Body]):
-        for modules in self.modules.values():
-            for module in modules:
-                module.pre_despawn(bodies)
+        for module in self.modules:
+            module.pre_despawn(bodies)
         self.bodies = [b for b in self.bodies if b not in bodies]
         [self._destroy_body(b) for b in bodies]
 
