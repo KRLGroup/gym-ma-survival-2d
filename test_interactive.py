@@ -30,7 +30,8 @@ def get_action_from_keyboard(last_pressed):
 controls_doc = """Keyboard controls:
 W,A,S,D: parallel and normal movement
 LEFT,RIGHT: angular movement
-E: attack
+C: attack
+E: use item (last picked up)
 -------------
 """
 

@@ -1,4 +1,6 @@
-from typing import Type, TypeVar, Sequence, Optional, Tuple, List, Callable, Any, Dict, Union, NamedTuple
+from typing import (
+    Type, TypeVar, Sequence, Optional, Tuple, List, Callable, Any, Dict, 
+    Union, NamedTuple)
 
 from Box2D import ( # type: ignore
     b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, 
@@ -273,7 +275,9 @@ def laser_scan(world: b2World, start: Vec2, end: Vec2) -> LaserScan:
     assert(raycast.fixture is not None)
     return raycast.fixture, depth
 
-def aabb_query(world: b2World, center: b2Vec2, width: float, height: float) -> List[b2Fixture]:
+def aabb_query(
+        world: b2World, center: b2Vec2, width: float,
+        height: float) -> List[b2Fixture]:
     lo = b2Vec2(center[0] - width/2, center[1] - height)
     hi = b2Vec2(center[0] + width/2, center[1] + height)
     aabb = b2AABB(lowerBound=lo, upperBound=hi)

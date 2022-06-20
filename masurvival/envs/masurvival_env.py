@@ -12,7 +12,8 @@ from Box2D import b2World, b2Body, b2Fixture, b2Joint, b2Vec2 # type: ignore
 import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
-    Health, Heal, Melee, Item, item_prototype, Inventory)
+    Health, Heal, Melee, Item, item_prototype, Inventory, AutoPickup, UseLast, 
+    DeathDrop)
 
 
 AgentObservation = List[sim.LaserScan]
@@ -64,8 +65,13 @@ default_config: Config = {
     },
     'inventory': {
         'slots': 4,
+    },
+    'auto_pickup': {
         'range': 0.5,
     },
+    'death_drop': {
+        'radius': 0.5,
+    }
 }
 
 class MaSurvivalEnv(gym.Env):
@@ -102,6 +108,8 @@ class MaSurvivalEnv(gym.Env):
         health_config = self.config['health']
         melee_config = self.config['melee']
         inventory_config = self.config['inventory']
+        auto_pickup_config = self.config['auto_pickup']
+        death_drop_config = self.config['death_drop']
         self.spawner = SpawnGrid(**spawn_grid_config)
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
@@ -109,7 +117,10 @@ class MaSurvivalEnv(gym.Env):
             sim.DynamicMotors(**motor_config),
             Health(**health_config),
             Melee(**melee_config),
-            Inventory(**inventory_config)]
+            DeathDrop(**death_drop_config), # needs to be before inventory
+            Inventory(**inventory_config),
+            AutoPickup(**auto_pickup_config),
+            UseLast()]
         boxes_config = self.config['boxes']
         box_size = boxes_config.pop('box_size')
         boxes_config['prototype'] = box_prototype(box_size)
@@ -120,7 +131,9 @@ class MaSurvivalEnv(gym.Env):
         heals_spawn_config = heals_config['reset_spawns']
         heals_heal_config = heals_config['heal']
         heal_size = heals_spawn_config.pop('item_size')
-        heals_spawn_config['prototype'] = item_prototype(heal_size)
+        heal_prototype = item_prototype(heal_size)
+        heals_heal_config['prototype'] = heal_prototype
+        heals_spawn_config['prototype'] = heal_prototype
         heals_spawn_config['n_spawns'] = heals_spawn_config.pop('n_items')
         heals_modules = [
             ResetSpawns(spawner=self.spawner, **heals_spawn_config),
@@ -145,6 +158,7 @@ class MaSurvivalEnv(gym.Env):
         self.spawner.rng = self.rng
         self.spawner.reset()
         self.simulation.reset()
+        self.simulation.groups[0].get(DeathDrop)[0].rng = self.rng
         obs = self.fetch_observations(self.simulation.groups[0])
         info: Dict = {}
         return (obs, info) if return_info else obs # type: ignore
@@ -214,4 +228,4 @@ class MaSurvivalEnv(gym.Env):
         controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
         agents.get(sim.DynamicMotors)[0].controls = controls
         agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
-        agents.get(Inventory)[0].uses = [bool(a[4]) for a in actions]
+        agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions]

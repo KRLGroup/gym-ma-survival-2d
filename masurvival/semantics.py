@@ -1,4 +1,4 @@
-from typing import Any, Type, Optional, Tuple, List, Dict, Set, NamedTuple
+from typing import Any, Type, Union, Optional, Tuple, List, Dict, Set, NamedTuple
 from operator import attrgetter
 
 from Box2D import ( # type: ignore
@@ -93,35 +93,87 @@ class ThickRoomWalls(sim.Module):
 
 # items and inventories
 
-# marks bodies in its group as items (they are immaterial and can be picked up 
-# by inventories); does nothing on use, so that subclasses can simply 
-# implement the use method for new types of items
+# marks bodies in its group as items (they are immaterial and can interact 
+# with inventories). Note that the meaning of the use and drop methods are 
+# "use or drop an item of this type"; there is no item-instance-specific 
+# information in them.
 class Item(sim.Module):
+
+    group: sim.Group
+    # should be set by subclasses
+    prototype: sim.Prototype
+    
+    # this should be overridden by subclasses
+    def use(self, user: b2Body):
+        pass
+
+    # can be used to "drop" (i.e. spawn) an item of this type with the given 
+    # placement; can also be overridden by subclasses if needed
+    def drop(self, placement: sim.Placement):
+        self.group.spawn([self.prototype], [placement])
+
+    def post_reset(self, group: sim.Group):
+        # keep a ref to the group so that items can be dropped
+        self.group = group
+
     def post_spawn(self, bodies: List[b2Body]):
         for body in bodies:
             for fixture in body.fixtures:
                 fixture.sensor = True
-    def use(self, user: b2Body):
-        pass
 
-# an inventory with automatic pickup of items in an AABB range around the 
-# bodies of the group; beware that bodies which have more than 1 associated 
-# item are only picked up if all the associated items can be picked up at once
+
+
+# adds a list inventory with a fixed number of slots to the bodies in its 
+# group; no other functionality is added, but the pickup, use, drop and 
+# drop_all methods can be used by other modules to manipulate inventories
 class Inventory(sim.Module):
 
     slots: int
-    range: float
-    drift: bool
     inventories: Dict[b2Body, List[Item]]
-    uses: List[bool]
 
-    def __init__(self, slots: int, range: float, drift: bool = False):
-        self.range = range
+    def __init__(self, slots: int):
         self.slots = slots
-        self.drift = drift
 
-    def post_reset(self, group: sim.Group):
-        self.uses = []
+    def full(self, body: b2Body):
+        return len(self.inventories[body])
+
+    def pickup(self, body: b2Body, item: b2Body):
+        items = sim.Group.body_group(item).get(Item)
+        inventory = self.inventories[body]
+        if len(items) <= 0:
+            return
+        if len(items) + len(inventory) > self.slots:
+            return
+        inventory += items # type: ignore
+        sim.Group.despawn_body(item)
+
+    def use(self, user: b2Body, slot: int = -1):
+        try:
+            item = self.inventories[user].pop(slot)
+        except IndexError:
+            return
+        item.use(user)
+
+    def drop(
+            self, body: b2Body, slot: int = -1,
+            offset: sim.Vec2 = b2Vec2(0,0)):
+        try:
+            item = self.inventories[body].pop(slot)
+        except IndexError:
+            return
+        item.drop(body.position + offset)
+ 
+    # more efficient alternative to drop to drop all items (inventory remains 
+    # but empty)
+    def drop_all(
+            self, body: b2Body,
+            offsets: Union[sim.Vec2, List[sim.Vec2]] = b2Vec2(0,0)):
+        inventory = self.inventories[body]
+        if not isinstance(offsets, list):
+            offsets = [offsets]*len(inventory)
+        for item, offset in zip(inventory, offsets):
+            item.drop(body.position + offset)
+        self.inventories[body] = []
 
     def post_spawn(self, bodies: List[b2Body]):
         if not hasattr(self, 'inventories'):
@@ -133,38 +185,74 @@ class Inventory(sim.Module):
         for body in bodies:
             del self.inventories[body]
 
-    def pre_step(self, group: sim.Group):
-        missing = len(group.bodies) - len(self.uses)
-        if missing > 0:
-            self.uses += [False]*missing
-        for (body, inventory), use \
-        in zip(self.inventories.items(), self.uses):
-            if not use:
-                continue
-            item: Item
-            try:
-                item = inventory.pop()
-            except:
-                continue
-            item.use(body)
-        if not self.drift:
-            self.uses = []
+# makes bodies pickup items in bounding box centered on them, putting them in 
+# the first inventory module it finds in the group
+class AutoPickup(sim.Module):
+    
+    # half-size of the box used for pickup
+    range: float
+    
+    def __init__(self, range: float):
+        self.range = range
 
     def post_step(self, group: sim.Group):
         r = self.range
         fixturess = [sim.aabb_query(group.world, body.position, r, r)
                      for body in group.bodies]
-        candidatess = [[f.body for f in fixtures] for fixtures in fixturess]
-        for body, candidates in zip(group.bodies, candidatess):
-            inventory = self.inventories[body]
-            for candidate in candidates:
-                items = sim.Group.body_group(candidate).get(Item)
-                if len(items) <= 0:
-                    continue
-                if len(items) + len(inventory) > self.slots:
-                    continue
-                inventory += items # type: ignore
-                sim.Group.despawn_body(candidate)
+        itemss = [[f.body for f in fixtures] for fixtures in fixturess]
+        inventory = group.get(Inventory)[0]
+        for body, items in zip(group.bodies, itemss):
+            [inventory.pickup(body, item) for item in items]
+
+# provides an use action which consumes the last item in each inventory of the 
+# body
+class UseLast(sim.Module):
+
+    drift: bool
+    uses: List[bool]
+
+    def __init__(self, drift: bool = False):
+        self.drift = drift
+
+    def post_reset(self, group: sim.Group):
+        self.uses = []
+
+    def pre_step(self, group: sim.Group):
+        missing = len(group.bodies) - len(self.uses)
+        if missing > 0:
+            self.uses += [False]*missing
+        inventories = group.get(Inventory)
+        for user, use in zip(group.bodies, self.uses):
+            if use:
+                [inventory.use(user) for inventory in inventories]
+        if not self.drift:
+            self.uses = []
+
+# drop items on death, scattering them randomly around the dead body; should 
+# be placed before the inventory module so that it can drop the items before 
+# the inventory vanishes
+class DeathDrop(sim.Module):
+
+    radius: float # radius of the scatter (fixed for now)
+    rng: np.random.Generator
+    group: sim.Group
+
+    def __init__(self, radius: float):
+        self.radius = radius
+
+    def post_reset(self, group: sim.Group):
+        self.group = group
+
+    def pre_despawn(self, bodies: List[b2Body]):
+        for m in self.group.get(Inventory):
+            fulls = [m.full(body) for body in bodies]
+            n_samples = np.sum(fulls, dtype=int)
+            all_angles = list(2*np.pi * self.rng.random(n_samples))
+            for body, full in zip(bodies, fulls):
+                angles = [all_angles.pop() for _ in range(full)]
+                offsets = [sim.from_polar(self.radius, angle)
+                           for angle in angles]
+                m.drop_all(body, offsets)
 
 
 # health, attacks, healing
@@ -252,8 +340,12 @@ class Melee(sim.Module):
 # heals the target by the specified amount of health
 class Heal(Item):
 
-    def __init__(self, healing: int):
+    prototype: sim.Prototype
+    healing: int
+
+    def __init__(self, healing: int, prototype: sim.Prototype):
         self.healing = healing
+        self.prototype = prototype
 
     def use(self, user: b2Body):
         healths = sim.Group.body_group(user).get(Health)
