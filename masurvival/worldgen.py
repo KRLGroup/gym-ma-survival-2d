@@ -10,18 +10,25 @@ from Box2D import ( # type: ignore
 
 # astract interface
 class Spawner:
+    def reset(self):
+        pass
     def placements(self, n: int) -> List[b2Vec2]:
         return []
 
 class SpawnGrid(Spawner):
 
+    grid_size: int
+    floor_size: float
+    rng: np.random.Generator
     positions: List[b2Vec2]
     
     def __init__(self, grid_size: int, floor_size: float):
-        self.positions = square_grid(grid_size, floor_size)
+        self.grid_size = grid_size
+        self.floor_size = floor_size
     
-    def shuffle(self, rng: np.random.Generator):
-        rng.shuffle(self.positions)
+    def reset(self):
+        self.positions = square_grid(self.grid_size, self.floor_size)
+        self.rng.shuffle(self.positions)
     
     def placements(self, n: int) -> List[b2Vec2]:
         return [self.positions.pop() for _ in range(n)]

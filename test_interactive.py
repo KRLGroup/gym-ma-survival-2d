@@ -8,7 +8,7 @@ from masurvival.envs.masurvival_env import MaSurvivalEnv
 
 def get_action_from_keyboard(last_pressed):
     keyboard = pygame.key.get_pressed()
-    action = [0, 0, 0]
+    action = [0, 0, 0, 0]
     if keyboard[pygame.K_w] and not keyboard[pygame.K_s]:
         action[0] = 1
     if keyboard[pygame.K_s] and not keyboard[pygame.K_w]:
@@ -21,11 +21,14 @@ def get_action_from_keyboard(last_pressed):
         action[2] = 1
     if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
         action[2] = 2
+    if keyboard[pygame.K_e] and not last_pressed[pygame.K_e]:
+        action[3] = 1
     return action, keyboard
 
 controls_doc = """Keyboard controls:
 W,A,S,D: parallel and normal movement
 LEFT,RIGHT: angular movement
+E: attack
 -------------
 """
 

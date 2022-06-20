@@ -9,17 +9,59 @@ from Box2D import ( # type: ignore
     b2Transform, b2Mat22, b2Fixture)
 
 import masurvival.simulation as sim
-from masurvival.semantics import Agents, Boxes
+import masurvival.semantics as sem
 
 Color = pygame.Color
 
-# each artist is usually associated to a simulation module
-class Artist:
-    def draw(self, canvas: 'Canvas'):
-        pass
+background = Color('white')
 
-default_background = Color('white')
-default_outline = Color('gray25')
+bodies_view_config = {
+    'fill': Color('gold'),
+    'outline': Color('gray25'),
+    'layer': 0,
+}
+
+agent_bodies_view_config = {
+    'fill': Color('cornflowerblue'),
+    'outline': Color('gray25'),
+    'layer': 0,
+}
+
+agent_lidars_view_config = {
+    'on': Color('indianred2'),
+    'off': Color('gray'),
+    'fill': None,
+    'outline': Color('indianred2'),
+    'layer': 1,
+}
+
+walls_view_config = {
+    'fill': Color('gray'),
+    'outline': Color('gray25'),
+    'layer': 0,
+}
+
+health_view_config = {
+    'y_offset': 0.75,
+    'fill': Color('green'),
+    'outline': None,
+    'layer': 1,
+}
+
+melee_view_config = {
+    'on': Color('indianred2'),
+    'off': Color('gray'),
+    'fill': Color('indianred2'),
+    'outline': Color('indianred2'),
+    'layer': 1,
+}
+
+
+# each view should draw one aspect of the group (e.g. a module)
+#TODO actually, these could very well be sim.Module's?
+class View:
+    def draw(self, canvas: 'Canvas', group: sim.Group):
+        pass
 
 class Canvas:
 
@@ -31,13 +73,13 @@ class Canvas:
     window: pygame.surface.Surface
     clock: Optional[pygame.time.Clock] = None
     background: Color
-    artists: List[Artist] = []
+    views: Dict[sim.Group, List[View]] = {}
 
     def __init__(
             self, width: int, height: int, world_size: float,
             render_mode: str = 'human', layers: int = 2, fps: int = 30, 
-            background: Color = default_background,
-            artists: List[Artist] = []):
+            background: Color = background,
+            views: Dict[sim.Group, List[View]] = {}):
         if render_mode not in ['human', 'rgb_array']:
             raise ValueError(f'Invalid render mode "{render_mode}".')
         self.render_mode = render_mode
@@ -55,7 +97,7 @@ class Canvas:
             self.window = pygame.Surface((width, height))
         self.surfaces = [pygame.Surface((width, height), pygame.SRCALPHA)
                          for _ in range(layers)]
-        self.artists += artists
+        self.views |= views
 
     def close(self):
         if self.render_mode == 'human':
@@ -70,8 +112,9 @@ class Canvas:
                 surface.fill(pygame.Color([0, 0, 0, 0]))        
 
     def render(self) -> np.ndarray:
-        for artist in self.artists:
-            artist.draw(self)
+        for group, views in self.views.items():
+            for view in views:
+                view.draw(self, group)
         for surface in self.surfaces:
             self.window.blit(surface, surface.get_rect())
         if self.render_mode == 'human':
@@ -165,91 +208,126 @@ class Canvas:
             self.draw_fixture(fixture, transform, fill_, outline_, layer)
 
 
-# concrete artists for concrete modules
+# concrete views for semantics
 
-class AgentsArtist(Artist):
-    
-    agents: Agents
-    layer: int
-    lidar_layer: int
+class Bodies(View):
+
     fill: Optional[Color]
     outline: Optional[Color]
-    lidar_on: Optional[Color]
-    lidar_off: Optional[Color]
-    lidar_fill: Optional[Color]
-    lidar_outline: Optional[Color]
-    
-    default_config: Dict[str, Any] = {
-        'lidar_layer': 1,
-        'fill': Color('cornflowerblue'),
-        'outline': default_outline,
-        'lidar_on': Color('indianred2'),
-        'lidar_off': Color('gray'),
-        'lidar_fill': None,
-        'lidar_outline': Color('indianred2'),
-    }
-    
+    layer: int
+
     def __init__(
-            self, agents: Agents, layer: int = 0, lidar_layer: int = 0,
-            fill: Optional[Color] = None, outline: Optional[Color] = None, 
-            lidar_on: Optional[Color] = None,
-            lidar_off: Optional[Color] = None,
-            lidar_fill: Optional[Color] = None,
-            lidar_outline: Optional[Color] = None):
-        self.agents = agents
-        self.layer = layer
-        self.lidar_layer = lidar_layer
+            self, fill: Optional[Color] = None,
+            outline: Optional[Color] = None, layer: int = 0):
         self.fill = fill
         self.outline = outline
-        self.lidar_on = lidar_on
-        self.lidar_off = lidar_off
-        self.lidar_fill = lidar_fill
-        self.lidar_outline = lidar_outline
-    
-    def draw(self, canvas: Canvas):
-        for body, sensor in zip(self.agents.bodies, self.agents.sensors):
-            self.draw_agent(canvas, body, sensor)
+        self.layer = layer
 
-    def draw_agent(self, canvas: Canvas, body: b2Body, lidar: sim.Lidar):
-        canvas.draw_body(body, self.fill, self.outline, self.layer)
-        origin, endpoints = lidar.origin, lidar.endpoints
-        for endpoint, scan in zip(endpoints, lidar.observation):
+    def draw(self, canvas, group: sim.Group):
+        for body in group.bodies:
+            canvas.draw_body(body, self.fill, self.outline, self.layer)
+
+class Lidars(View):
+
+    on: Optional[Color]
+    off: Optional[Color]
+    fill: Optional[Color]
+    outline: Optional[Color]
+    layer: int
+
+    def __init__(
+            self, on: Optional[Color] = None, off: Optional[Color] = None, 
+            fill: Optional[Color] = None, outline: Optional[Color] = None, 
+            layer: int = 1):
+        self.on = on
+        self.off = off
+        self.fill = fill
+        self.outline = outline
+        self.layer = layer
+
+    def draw(self, canvas, group: sim.Group):
+        for lidars in group.modules[sim.Lidars]:
+            assert(isinstance(lidars, sim.Lidars))
+            for origin, endpoints, scan \
+            in zip(lidars.origins, lidars.endpoints, lidars.scans):
+                self._draw_lidar(canvas, origin, endpoints, scan)
+
+    def _draw_lidar(self, canvas, origin, endpoints, scans):
+        for endpoint, scan in zip(endpoints, scans):
             is_on = scan is not None
-            laser_color = self.lidar_on if is_on else self.lidar_off
-            if laser_color is None:
+            color = self.on if is_on else self.off
+            if color is None:
                 continue
             length = 1 if not is_on else scan[1] # type: ignore
             endpoint = (1-length)*origin + length*endpoint
-            canvas.draw_segment(
-                origin, endpoint, laser_color, self.lidar_layer)
-            if is_on:
-                fixture = scan[0] # type: ignore
-                transform = fixture.body.transform
-                canvas.draw_fixture(
-                    fixture, transform, self.lidar_fill, self.lidar_outline, 
-                    self.lidar_layer)
+            canvas.draw_segment(origin, endpoint, color, self.layer)
+            if not is_on:
+                continue
+            fixture = scan[0] # type: ignore
+            transform = fixture.body.transform
+            canvas.draw_fixture(
+                fixture, transform, self.fill, self.outline, self.layer)
 
-class BoxesArtist(Artist):
+class Health(View):
 
-    boxes: Boxes
-    layer: int
+    offset: b2Vec2
     fill: Optional[Color]
     outline: Optional[Color]
-    
-    default_config: Dict[str, Any] = {
-        'fill': Color('gold'),
-        'outline': Color('gray25'),
-    }
-    
+    layer: int
+
     def __init__(
-            self, boxes: Boxes, layer: int = 0, fill: Optional[Color] = None, 
-            outline: Optional[Color] = None):
-        self.boxes = boxes
-        self.layer = layer
+            self, y_offset: float = 0, fill: Optional[Color] = None,
+            outline: Optional[Color] = None, layer: int = 0):
+        self.offset = b2Vec2(0, y_offset)
         self.fill = fill
         self.outline = outline
+        self.layer = layer
 
-    def draw(self, canvas: Canvas):
-        for body in self.boxes.bodies:
-            canvas.draw_body(body, self.fill, self.outline, self.layer)
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for module in group.modules[sem.Health]:
+            assert(isinstance(module, sem.Health))
+            for body, health in module.healths.items():
+                self._draw_health(body, health, canvas)
 
+    def _draw_health(self, body: b2Body, health: int, canvas: Canvas):
+        #TODO have params for the health bar dimensions
+        healthbar = sim.rect_shape(health/10, 0.25)
+        offset = b2Transform()
+        offset.Set(position=(body.position + self.offset), angle=0)
+        canvas.draw_polygon(
+            healthbar.vertices, offset, self.fill, self.outline, self.layer)
+
+class Melee(View):
+    
+    on: Optional[Color]
+    off: Optional[Color]
+    fill: Optional[Color]
+    outline: Optional[Color]
+    layer: int
+    
+    def __init__(
+            self, on: Optional[Color] = None, off: Optional[Color] = None, 
+            fill: Optional[Color] = None, outline: Optional[Color] = None, 
+            layer: int = 0):
+        self.on = on
+        self.off = off
+        self.fill = fill
+        self.outline = outline
+        self.layer = layer
+    
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.modules[sem.Melee]:
+            assert(isinstance(m, sem.Melee))
+            for a, b, attack, target \
+            in zip(m.origins, m.endpoints, m.attacks, m.targets):
+                self._draw_melee(a, b, attack, target, canvas)
+
+    def _draw_melee(
+            self, a: b2Vec2, b: b2Vec2, attack: bool,
+            target: Optional[b2Body], canvas: Canvas):
+        color = self.on if attack else self.off
+        if color is not None:
+            canvas.draw_segment(a, b, color, self.layer)
+        if target is None or not attack:
+            return
+        canvas.draw_body(target, self.fill, self.outline, self.layer)

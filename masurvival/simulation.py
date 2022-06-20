@@ -1,4 +1,4 @@
-from typing import Sequence, Optional, Tuple, List, Callable, Any, Dict, Union, NamedTuple
+from typing import Type, Sequence, Optional, Tuple, List, Callable, Any, Dict, Union, NamedTuple
 
 from Box2D import ( # type: ignore
     b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, 
@@ -10,6 +10,7 @@ from Box2D import ( # type: ignore
 # basic geometry
 
 Vec2 = Union[Tuple[float, float], b2Vec2]
+Vec3 = Tuple[float, float, float]
 
 def from_polar(length: float, angle: float) -> b2Vec2:
     R = b2Mat22()
@@ -26,50 +27,141 @@ def circle_shape(radius: float) -> b2Shape:
     return b2CircleShape(radius=radius)
 
 
-# body prototyping and spawning
+# creating bodies with modular behaviour
+
+# A module is associated to a group of bodies, which in turn may have several 
+# modules associated to it; each module may control the behaviour of bodies in 
+# the group by defining one or more methods of the Module class.
+# Each body always knows which group it belongs to; by accessing the group, 
+# one can spawn and despawn bodies in that group and access their module-
+# specific data (if any), so Box2D methods should not be used for that since 
+# they mess up the group state.
+# A more advanced case is when a module is used in more than one group; in 
+# that case, it is its responsibility to distinguish between groups when its 
+# methods are called.
+# Things NOT to do inside module methods (these WILL mess up the group state):
+# - change the list of bodies, modules or set the world attribute of the group
+# - create or destroy a body that belongs in a group without using the group's 
+#   spawn or despawn methods
+# - change the userData of a body that belongs in a group
+# Things that can be done safely:
+# - perform raycasts on group.world
+# - [...]
+# Good examples of usage are in the semantics module.
+class Module:
+    # called when sim is reset
+    def post_reset(self, group: 'Group'):
+        pass
+    # called before each sim step
+    def pre_step(self, group: 'Group'):
+        pass
+    # called after each sim step
+    def post_step(self, group: 'Group'):
+        pass
+    # called when new bodies spawn in the group (they wont yet be in the 
+    # group.bodies)
+    def post_spawn(self, bodies: List[b2Body]):
+        pass
+    # called when some bodies are about to despawn from the group
+    def pre_despawn(self, bodies: List[b2Body]):
+        pass
+
+
+# utiltiy type to pack Box2D body definitions
 
 default_density = 1.
 default_restitution = 0.
 default_damping = 0.8
 
-BodyData = Union[int, float, str]
-
-class BodyPrototype(NamedTuple):
+class Prototype(NamedTuple):
     shape: b2Shape
     dynamic: bool = True
     density: float = default_density
     restitution: float = default_restitution
     damping: float = default_damping
     sensor: bool = False
-    data: Dict[str, BodyData] = {}
 
-def spawn(
-        world: b2World, prototype: BodyPrototype,
-        position: Vec2 = b2Vec2(0, 0), orientation: float = 0) -> b2Body:
-    type = b2_dynamicBody if prototype.dynamic else b2_staticBody
-    fixture = b2FixtureDef(
-        shape=prototype.shape, density=prototype.density,
-        restitution=prototype.restitution, isSensor=prototype.sensor)
-    body = world.CreateBody(
-        type=type, position=position, angle=orientation, fixtures=fixture,
-        linearDamping=prototype.damping, angularDamping=prototype.damping, 
-        userData=prototype.data)
-    return body
+# either position or position and orientation
+Placement = Union[Vec3, Vec2]
 
+class Group:
 
-# modules
+    bodies: List[b2Body]
+    modules: Dict[Type, List[Module]]
+    world: b2World
 
-class Module:
-    dependencies: Sequence['Module'] = []
+    @staticmethod
+    def body_group(body: b2Body) -> 'Group':
+        return body.userData
+
+    @staticmethod
+    def body_modules(body: b2Body) -> Dict[Type, List[Module]]:
+        return Group.body_group(body).modules
+
+    def __init__(self, modules: Sequence[Module] = []):
+        self.bodies = []
+        self.modules = {}
+        self.add_modules(modules)
+    
+    def add_modules(self, modules: Sequence[Module]):
+        [self.add_module(module) for module in modules]
+    
+    def add_module(self, module: Module):
+        type_ = type(module)
+        if type_ not in self.modules:
+            self.modules[type_] = []
+        self.modules[type_].append(module)
+
     def reset(self, world: b2World):
-        pass
-    def act(self, world: b2World):
-        pass
-    def observe(self, world: b2World):
-        pass
+        #TODO destroy all bodies in the previous world?
+        self.world = world
+        self.bodies = []
+        for modules in self.modules.values():
+            for module in modules:
+                module.post_reset(self)
 
+    def pre_step(self):
+        for modules in self.modules.values():
+            for module in modules:
+                module.pre_step(self)
 
-# modular simulations
+    def post_step(self):
+        for modules in self.modules.values():
+            for module in modules:
+                module.post_step(self)
+
+    def spawn(self, prototypes: List[Prototype], placements: List[Placement]):
+        bodies = [self._create_body(proto, pos)
+                  for proto, pos in zip(prototypes, placements)]
+        for modules in self.modules.values():
+            for module in modules:
+                module.post_spawn(bodies)
+        self.bodies += bodies
+
+    def despawn(self, bodies: List[b2Body]):
+        for modules in self.modules.values():
+            for module in modules:
+                module.pre_despawn(bodies)
+        self.bodies = [b for b in self.bodies if b not in bodies]
+        [self._destroy_body(b) for b in bodies]
+
+    def _create_body(self, prototype: Prototype, placement: Placement):
+        has_angle = len(placement) == 3
+        position = placement if not has_angle else placement[0:2]
+        angle = 0 if not has_angle else placement[2] # type: ignore
+        type = b2_dynamicBody if prototype.dynamic else b2_staticBody
+        fixture = b2FixtureDef(
+            shape=prototype.shape, density=prototype.density,
+            restitution=prototype.restitution, isSensor=prototype.sensor)
+        body = self.world.CreateBody(
+            type=type, position=position, angle=angle, fixtures=fixture,
+            linearDamping=prototype.damping, angularDamping=prototype.damping, 
+            userData=self)
+        return body
+
+    def _destroy_body(self, body: b2Body):
+        self.world.DestroyBody(body)
+
 
 class Simulation:
 
@@ -78,109 +170,100 @@ class Simulation:
     time_step: float
     velocity_iterations: int
     position_iterations: int
-    modules: List[Module] = []
+    groups: List[Group] = []
 
     def __init__(
             self, substeps: int = 2, time_step: float = 1/60, 
-            velocity_iterations: int = 10, position_iterations: int = 10, 
-            modules: List[Module] = []):
+            velocity_iterations: int = 10, position_iterations: int = 10,
+            groups: List[Group] = []):
         self.substeps = substeps
         self.time_step = time_step
         self.velocity_iterations = velocity_iterations
         self.position_iterations = position_iterations
-        [self.add_module(m) for m in modules]
-
-    def add_module(self, module: Module):
-        [self.add_module(d) for d in module.dependencies]
-        self.modules.append(module)
+        self.groups += groups
 
     def reset(self):
         self.world = b2World(gravity=(0, 0), doSleep=True)        
-        for module in self.modules:
-            module.reset(self.world)
-        for module in self.modules:
-            module.observe(self.world)
+        for group in self.groups:
+            group.reset(self.world)
 
     def step(self):
-        for module in self.modules:
-            module.act(self.world)
+        for group in self.groups:
+            group.pre_step()
         for _ in range(self.substeps):
             self.world.Step(
                 self.time_step, self.velocity_iterations, 
                 self.position_iterations)
         self.world.ClearForces()
-        for module in self.modules:
-            module.observe(self.world)
+        for group in self.groups:
+            group.post_step()
 
 
-# basic modules
+# basic concrete modules
 
-class Lidar(Module):
+class Lidars(Module):
 
     n_lasers: int
     fov: float
     depth: float
-    body: b2Body
-    origin: b2Vec2
-    endpoints: b2Vec2
-    observation: List['LaserScan'] = []
+    scans: List[List['LaserScan']] = []
+    origins: List[b2Vec2] = []
+    endpoints: List[List[b2Vec2]] = []
 
-    def __init__(
-            self, n_lasers: int, fov: float, depth: float,
-            body: Optional[b2Body] = None):
+    def __init__(self, n_lasers: int, fov: float, depth: float):
         self.n_lasers = n_lasers
         self.fov = fov
         self.depth = depth
-        if body is not None:
-            self.body = body
 
-    def observe(self, world: b2World):
-        origin = self.body.position
-        orientation = self.body.angle
-        endpoints: b2Vec2 = []
-        scan = []
+    def post_step(self, group: Group):
+        self.origins = [body.position for body in group.bodies]
+        orientations = [body.angle for body in group.bodies]
+        self.endpoints = [self._endpoints(p, a)
+                          for p, a in zip(self.origins, orientations)]
+        self.scans = [[laser_scan(group.world, a, b) for b in bs]
+                      for a, bs in zip(self.origins, self.endpoints)]
+
+    def _endpoints(self, origin: b2Vec2, orientation: float):
+        endpoints = []
         for i in range(self.n_lasers):
             angle = i*(self.fov/(self.n_lasers-1)) - self.fov/2.
             angle += orientation
             endpoint = origin + from_polar(length=self.depth, angle=angle)
             endpoints.append(endpoint)
-            scan.append(laser_scan(world, origin, endpoint))
-        self.observation = scan
-        self.origin = origin
-        self.endpoints = endpoints
+        return endpoints
 
-class DynamicMotor(Module):
 
-    linear_impulse: float
-    angular_impulse: float
+class DynamicMotors(Module):
+
+    # (*linear,angular) impulses given for unitary controls
+    impulse: Vec3
+    # whether to avoid resetting the controls to 0 after each application
     drift: bool
-    body: b2Body
+    controls: List[Vec3] = []
 
-    def __init__(
-            self, linear_impulse: float, angular_impulse: float,
-            body: Optional[b2Body] = None, drift: bool = False):
-        self.linear_impulse = linear_impulse
-        self.angular_impulse = angular_impulse
-        if body is not None:
-            self.body = body
+    def __init__(self, impulse: Vec3, drift: bool = False):
+        self.impulse = impulse
         self.drift = drift
 
-    def control(self, linear_control: Vec2, angular_control: float):
-        self.linear_control = linear_control
-        self.angular_control = angular_control
-
-    def act(self, world: b2World):
-        R = self.body.transform.R
-        p = self.body.worldCenter
-        parallel_impulse = self.linear_control[0]*self.linear_impulse
-        normal_impulse = self.linear_control[1]*self.linear_impulse
-        linear_impulse = R*b2Vec2(parallel_impulse, normal_impulse)
-        angular_impulse = self.angular_control*self.angular_impulse
-        self.body.ApplyLinearImpulse(linear_impulse, p, True)
-        self.body.ApplyAngularImpulse(angular_impulse, True)
+    # completes missing controls with 0s, ignores excess controls
+    def pre_step(self, group: Group):
+        missing = len(group.bodies) - len(self.controls)
+        if missing > 0:
+            self.controls += [(0,0,0)]*missing
+        for body, control in zip(group.bodies, self.controls):
+            self._apply_control(body, control)
         if not self.drift:
-            self.linear_control = b2Vec2(0, 0)
-            self.angular_control = 0
+            self.controls = []
+
+    def _apply_control(self, body: b2Body, control: Vec3):
+        R = body.transform.R
+        p = body.worldCenter
+        parallel_impulse = control[0]*self.impulse[0]
+        normal_impulse = control[1]*self.impulse[1]
+        linear_impulse = R*b2Vec2(parallel_impulse, normal_impulse)
+        angular_impulse = control[2]*self.impulse[2]
+        body.ApplyLinearImpulse(linear_impulse, p, True)
+        body.ApplyAngularImpulse(angular_impulse, True)
 
 
 # utilities
