@@ -15,7 +15,7 @@ import masurvival.semantics as sem
 pygame.freetype.init()
 
 Color = pygame.Color
-Font = pygame.freetype.Font
+Font = pygame.freetype.Font # type: ignore
 
 default_font = pygame.freetype.SysFont('Roboto', size=12)
 
@@ -49,6 +49,7 @@ walls_view_config = {
 
 health_view_config = {
     'y_offset': 0.75,
+    'max_health': 100,
     'fill': Color('green'),
     'outline': None,
     'layer': 1,
@@ -62,7 +63,14 @@ melee_view_config = {
     'layer': 1,
 }
 
-inventory_view_config = {
+inventory_view_config: Dict[str, Any] = {}
+
+safe_zone_view_config = {
+    'fill': Color('lightgreen'),
+    'outline': None,
+    'layer': 0,
+    'outlier_outline': Color('indianred2'),
+    'outlier_layer': 1,
 }
 
 
@@ -137,12 +145,13 @@ class Canvas:
         return np.transpose(transposed_img, axes=(1, 0, 2))
 
     def draw_text(
-            self, text: str, position: sim.Vec2, font: Font = default_font, 
+            self, text: str, position: sim.Vec2,
+            font: Font = default_font, # type: ignore
             foreground: Optional[Color] = None,
             background: Optional[Color] = None, layer: int = 0):
         surface = self.surfaces[layer]
         p = self.to_screen*(self.scale*position)
-        font.render_to(
+        font.render_to( # type: ignore
             surface, p, text, fgcolor=foreground, bgcolor=background)
 
     def draw_segment(
@@ -291,14 +300,14 @@ class Lidars(View):
 # display inventories on the top left of the screen
 class Inventory(View):
     
-    font: Font
+    font: Font # type: ignore
     foreground: Optional[Color]
     background: Optional[Color]
     layer: int
     offset: b2Vec2
     
     def __init__(
-            self, font: Font = default_font,
+            self, font: Font = default_font, # type: ignore
             foreground: Optional[Color] = None,
             background: Optional[Color] = None, layer: int = 0):
         self.font = font
@@ -323,9 +332,11 @@ class Health(View):
     layer: int
 
     def __init__(
-            self, y_offset: float = 0, fill: Optional[Color] = None,
-            outline: Optional[Color] = None, layer: int = 0):
+            self, y_offset: float = 0, max_health: int = 0,
+            fill: Optional[Color] = None, outline: Optional[Color] = None, 
+            layer: int = 0):
         self.offset = b2Vec2(0, y_offset)
+        self.max_health = max_health
         self.fill = fill
         self.outline = outline
         self.layer = layer
@@ -337,7 +348,7 @@ class Health(View):
 
     def _draw_health(self, body: b2Body, health: int, canvas: Canvas):
         #TODO have params for the health bar dimensions
-        healthbar = sim.rect_shape(health/10, 0.25)
+        healthbar = sim.rect_shape(health/self.max_health, 0.15)
         offset = b2Transform()
         offset.Set(position=(body.position + self.offset), angle=0)
         canvas.draw_polygon(
@@ -376,5 +387,39 @@ class Melee(View):
         if target is None or not attack:
             return
         canvas.draw_body(target, self.fill, self.outline, self.layer)
-           
+
+
+#TODO implement alpha (see https://stackoverflow.com/questions/6339057/draw-a-transparent-rectangles-and-polygons-in-pygame)
+class SafeZone(View):
+
+    fill: Optional[Color]
+    outline: Optional[Color]
+    outlier_fill: Optional[Color]
+    outlier_outline: Optional[Color]
+    layer: int
+    outlier_layer: int
+
+    def __init__(
+            self, fill: Optional[Color] = None,
+            outline: Optional[Color] = None,
+            outlier_fill: Optional[Color] = None,
+            outlier_outline: Optional[Color] = None, layer: int = 0, 
+            outlier_layer: int = 0):
+        self.fill = fill
+        self.outline = outline
+        self.outlier_fill = outlier_fill
+        self.outlier_outline = outlier_outline
+        self.layer = layer
+        self.outlier_layer = outlier_layer
+
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.get(sem.SafeZone):
+            shape, transform = m.zone
+            radius = shape.radius
+            canvas.draw_circle(
+                radius, transform, self.fill, self.outline, self.layer)
+            for body in m.outliers:
+                canvas.draw_body(
+                    body, self.outlier_fill, self.outlier_outline, 
+                    self.outlier_layer)
 

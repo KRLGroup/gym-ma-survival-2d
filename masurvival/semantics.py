@@ -1,8 +1,9 @@
-from typing import Any, Type, Union, Optional, Tuple, List, Dict, Set, NamedTuple
+from typing import (
+    Any, Type, Union, Optional, Tuple, List, Dict, Set, NamedTuple)
 from operator import attrgetter
 
 from Box2D import ( # type: ignore
-    b2Vec2, b2World, b2Body)
+    b2Vec2, b2World, b2Body, b2CircleShape, b2Transform)
 
 import numpy as np
 
@@ -65,30 +66,6 @@ class ResetSpawns(sim.Module):
     
     def post_reset(self, group: sim.Group):
         group.spawn(self.prototypes, self.spawner.placements(self.n_spawns))
-
-
-# bodies with fixed placement (e.g. room walls)
-
-# spawns 4 immovable, thick walls enclosing a room of given size
-class ThickRoomWalls(sim.Module):
-
-    prototypes: List[sim.Prototype]
-    placements: List[b2Vec2]
-
-    def __init__(self, room_size: float, wall_aspect_ratio: float = 100):
-        height = room_size
-        width = height / wall_aspect_ratio
-        shape = sim.rect_shape(width=width, height=height)
-        self.prototypes = [sim.Prototype(shape=shape, dynamic=False)]*4
-        offset = room_size/2
-        self.placements = [
-            (-offset, 0, 0), # west wall
-            (0, offset, np.pi/2), # north wall
-            (offset, 0, 0), # east wall
-            (0, -offset, np.pi/2),] # south wall
-
-    def post_reset(self, group: sim.Group):
-        group.spawn(self.prototypes, self.placements)
 
 
 # items and inventories
@@ -351,6 +328,123 @@ class Heal(Item):
         healths = sim.Group.body_group(user).get(Health)
         for health in healths:
             health.heal(user, self.healing) # type: ignore
+
+
+# map features: safe zone, terrain, etc.
+
+# spawns 4 immovable, thick walls enclosing a room of given size
+class ThickRoomWalls(sim.Module):
+
+    prototypes: List[sim.Prototype]
+    placements: List[b2Vec2]
+
+    def __init__(self, room_size: float, wall_aspect_ratio: float = 100):
+        height = room_size
+        width = height / wall_aspect_ratio
+        shape = sim.rect_shape(width=width, height=height)
+        self.prototypes = [sim.Prototype(shape=shape, dynamic=False)]*4
+        offset = room_size/2
+        self.placements = [
+            (-offset, 0, 0), # west wall
+            (0, offset, np.pi/2), # north wall
+            (offset, 0, 0), # east wall
+            (0, -offset, np.pi/2),] # south wall
+
+    def post_reset(self, group: sim.Group):
+        group.spawn(self.prototypes, self.placements)
+
+# shrinking & moving safe zones (e.g. like fortnite); all bodies in their 
+# group take constant damage when outside the zone; each zone in the sequence 
+# has 2 phases: cooldown and "shrink & move" to the next zone. The last zone 
+# is void, so all bodies in the group take damage
+class SafeZone(sim.Module):
+
+    phases: int
+    cooldown: int
+    damage: int
+    radiuses: List[float]
+    centers: List[b2Vec2]
+    phase: int
+    t_cooldown: int
+    t_shrink: int
+    endgame: bool
+    zone: Tuple[b2CircleShape, b2Transform]
+    outliers: List[b2Body]
+
+    def __init__(
+            self, phases: int, cooldown: int, damage: int,
+            radiuses: List[float], centers: List[sim.Vec2]):
+        self.phases = phases
+        self.cooldown = cooldown
+        self.damage = damage
+        self.radiuses = list(radiuses)
+        self.radiuses.append(0)
+        self.centers = [b2Vec2(c) for c in centers]
+        self.centers.append(b2Vec2(0,0))
+
+    def post_reset(self, group: sim.Group):
+        self.t_cooldown = self.cooldown
+        self.t_shrink = 0
+        self.phase = 0
+        self.endgame = False
+        shape = sim.circle_shape(self.radiuses[0])
+        transform = sim.transform(translation=self.centers[0])
+        self.zone = (shape, transform)
+        self.outliers = []
+
+    def post_step(self, group: sim.Group):
+        self.outliers = []
+        healths = group.get(Health)
+        shape, transform = self.zone
+        for body in group.bodies:
+            if self.endgame \
+            or not shape.TestPoint(transform, body.worldCenter):
+                self.outliers.append(body)
+                [health.damage(body, self.damage) for health in healths]
+        self.tick()
+
+    @property
+    def shrinking(self) -> bool:
+        assert (self.t_cooldown == 0) != (self.t_shrink == 0)
+        return self.t_cooldown == 0
+
+    # advances time by 1 and updates the zone and phase
+    def tick(self):
+        if self.shrinking:
+            self._tick_shrink()
+        else:
+            self._tick_cooldown()
+
+    def _tick_cooldown(self):
+        self.t_cooldown -= 1
+        if self.t_cooldown > 0:
+            return
+        self.t_shrink = self.cooldown
+
+    def _tick_shrink(self):
+        if self.endgame:
+            return
+        self.t_shrink -= 1
+        if self.t_shrink > 0:
+            self._update_shrinking_zone()
+            return
+        self.t_cooldown = self.cooldown
+        self.phase = self.phase + 1
+        shape = sim.circle_shape(self.radiuses[self.phase])
+        transform = sim.transform(translation=self.centers[self.phase])
+        self.zone = (shape, transform)
+        if self.phase == self.phases - 1:
+            self.endgame = True
+
+    def _update_shrinking_zone(self):
+        t = self.t_shrink / self.cooldown
+        r1, r2 = self.radiuses[self.phase : self.phase+2]
+        c1, c2 = self.centers[self.phase : self.phase+2]
+        radius = t*r1 + (1-t)*r2
+        center = t*c1 + (1-t)*c2
+        shape = sim.circle_shape(radius)
+        transform = sim.transform(translation=center)
+        self.zone = (shape, transform)
 
 
 # utilties

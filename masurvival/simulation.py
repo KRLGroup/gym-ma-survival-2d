@@ -22,6 +22,11 @@ def from_polar(length: float, angle: float) -> b2Vec2:
     R.angle = angle
     return R*b2Vec2(length, 0.)
 
+def transform(translation: b2Vec2 = b2Vec2(0,0), angle: float = 0):
+    T = b2Transform()
+    T.Set(position=translation, angle=angle)
+    return T
+
 def square_shape(side: float) -> b2Shape:
     return b2PolygonShape(box=(side/2., side/2.))
 

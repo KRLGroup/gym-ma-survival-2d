@@ -13,7 +13,7 @@ import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
     Health, Heal, Melee, Item, item_prototype, Inventory, AutoPickup, UseLast, 
-    DeathDrop)
+    DeathDrop, SafeZone)
 
 
 AgentObservation = List[sim.LaserScan]
@@ -43,11 +43,11 @@ default_config: Config = {
         'drift': False,
     },
     'health': {
-        'health': 10,
+        'health': 100,
     },
     'melee': {
         'range': 2,
-        'damage': 1,
+        'damage': 10,
         'drift': True, # so that we can actually render actions
     },
     'boxes': {
@@ -60,7 +60,7 @@ default_config: Config = {
             'item_size': 0.5,
         },
         'heal': {
-            'healing': 5,
+            'healing': 50,
         },
     },
     'inventory': {
@@ -71,7 +71,14 @@ default_config: Config = {
     },
     'death_drop': {
         'radius': 0.5,
-    }
+    },
+    'safe_zone': {
+        'phases': 5,
+        'cooldown': 100,
+        'damage': 1,
+        'radiuses': [10, 5, 2.5, 1],
+        'centers': [(0,0), (0,0), (0,0), (0,0)],
+    },
 }
 
 class MaSurvivalEnv(gym.Env):
@@ -110,6 +117,7 @@ class MaSurvivalEnv(gym.Env):
         inventory_config = self.config['inventory']
         auto_pickup_config = self.config['auto_pickup']
         death_drop_config = self.config['death_drop']
+        safe_zone_config = self.config['safe_zone']
         self.spawner = SpawnGrid(**spawn_grid_config)
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
@@ -120,7 +128,8 @@ class MaSurvivalEnv(gym.Env):
             DeathDrop(**death_drop_config), # needs to be before inventory
             Inventory(**inventory_config),
             AutoPickup(**auto_pickup_config),
-            UseLast()]
+            UseLast(),
+            SafeZone(**safe_zone_config),]
         boxes_config = self.config['boxes']
         box_size = boxes_config.pop('box_size')
         boxes_config['prototype'] = box_prototype(box_size)
@@ -184,6 +193,8 @@ class MaSurvivalEnv(gym.Env):
             agents, boxes, heals, walls = self.simulation.groups
             views = {
                 agents: [
+                    rendering.SafeZone(
+                        **rendering.safe_zone_view_config), # type: ignore
                     rendering.Bodies(
                         **rendering.agent_bodies_view_config), # type: ignore
                     rendering.Lidars(
