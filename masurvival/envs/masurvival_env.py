@@ -13,17 +13,23 @@ import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
     Health, Heal, Melee, Item, item_prototype, Inventory, AutoPickup, UseLast, 
-    DeathDrop, SafeZone)
+    DeathDrop, SafeZone, BattleRoyale)
 
 
 AgentObservation = List[sim.LaserScan]
 Observation = Tuple[AgentObservation, ...]
 AgentAction = Tuple[int, int, int, int, int]
 Action = Tuple[AgentAction, ...]
+Reward = Tuple[float, ...]
 
 Config = Dict[str, Dict[str, Any]]
 
 default_config: Config = {
+    'reward_scheme': {
+        # if sparse, reward only at episode end (+1 win, -1 lose)
+        # if not sparse, -1 reward if dead, +1 if alive
+        'sparse': False,
+    },
     'rng': { 'seed': 42 },
     'spawn_grid': {
         'grid_size': 4,
@@ -121,6 +127,8 @@ class MaSurvivalEnv(gym.Env):
         self.spawner = SpawnGrid(**spawn_grid_config)
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
+            sim.LogDeaths(), # this must come before IndexBodies to work
+            sim.IndexBodies(),
             sim.Lidars(**lidar_config),
             sim.DynamicMotors(**motor_config),
             Health(**health_config),
@@ -129,7 +137,8 @@ class MaSurvivalEnv(gym.Env):
             Inventory(**inventory_config),
             AutoPickup(**auto_pickup_config),
             UseLast(),
-            SafeZone(**safe_zone_config),]
+            SafeZone(**safe_zone_config),
+            BattleRoyale()]
         boxes_config = self.config['boxes']
         box_size = boxes_config.pop('box_size')
         boxes_config['prototype'] = box_prototype(box_size)
@@ -172,14 +181,16 @@ class MaSurvivalEnv(gym.Env):
         info: Dict = {}
         return (obs, info) if return_info else obs # type: ignore
 
-    def step(self, action: Action) -> Tuple[Observation, float, bool, Dict]:
+    def step(self, action: Action) -> Tuple[Observation, Reward, bool, Dict]:
         assert self.action_space.contains(action), "Invalid action."
         agents, boxes, heals, walls = self.simulation.groups
         self.queue_actions(agents, action)
         self.simulation.step()
         obs = self.fetch_observations(agents)
-        reward = 0.
-        done = False
+        reward = self.compute_rewards(agents, **self.config['reward_scheme'])
+        done = agents.get(BattleRoyale)[0].over
+        if done:
+            print(reward)
         info: Dict = {}
         return obs, reward, done, info # type: ignore
 
@@ -197,6 +208,8 @@ class MaSurvivalEnv(gym.Env):
                         **rendering.safe_zone_view_config), # type: ignore
                     rendering.Bodies(
                         **rendering.agent_bodies_view_config), # type: ignore
+                    rendering.BodyIndices(
+                        **rendering.body_indices_view_config), # type: ignore
                     rendering.Lidars(
                         **rendering.agent_lidars_view_config), # type: ignore 
                     rendering.Health(
@@ -232,11 +245,30 @@ class MaSurvivalEnv(gym.Env):
             self.canvas.close()
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
-        return tuple(agents.get(sim.Lidars)[0].scans) # type: ignore
-    
+        bodies = agents.get(sim.IndexBodies)[0].bodies
+        # Reverse scans so we can pop from the end of the list.
+        scans = list(reversed(agents.get(sim.Lidars)[0].scans))
+        obs = [[] if body is None else scans.pop() for body in bodies]
+        return tuple(obs)
+
     def queue_actions(self, agents: sim.Group, actions: Action):
         d = [0., 1., -1.]
-        controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
+        bodies = agents.get(sim.IndexBodies)[0].bodies
+        actions_alive = []
+        for i, a in enumerate(actions):
+            if bodies[i] is not None:
+                actions_alive.append(a)
+        controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions_alive]
         agents.get(sim.DynamicMotors)[0].controls = controls
-        agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
-        agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions]
+        agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions_alive]
+        agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions_alive]
+
+    def compute_rewards(
+            self, agents: sim.Group, sparse: bool) -> Tuple[float, ...]:
+        bodies = agents.get(sim.IndexBodies)[0].bodies
+        if not sparse:
+            return tuple(-1 if body is None else +1 for body in bodies)
+        game = agents.get(BattleRoyale)[0]
+        if not game.over:
+            return tuple(0 for _ in bodies)
+        return tuple(+1 if won else -1 for won in game.results)

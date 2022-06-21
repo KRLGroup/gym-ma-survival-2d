@@ -27,6 +27,10 @@ bodies_view_config = {
     'layer': 0,
 }
 
+body_indices_view_config = {
+    'layer': 2,
+}
+
 agent_bodies_view_config = {
     'fill': Color('cornflowerblue'),
     'outline': Color('gray25'),
@@ -95,7 +99,7 @@ class Canvas:
 
     def __init__(
             self, width: int, height: int, world_size: float,
-            render_mode: str = 'human', layers: int = 2, fps: int = 30, 
+            render_mode: str = 'human', layers: int = 3, fps: int = 30, 
             background: Color = background,
             views: Dict[sim.Group, List[View]] = {}):
         if render_mode not in ['human', 'rgb_array']:
@@ -252,9 +256,23 @@ class Bodies(View):
         self.outline = outline
         self.layer = layer
 
-    def draw(self, canvas, group: sim.Group):
+    def draw(self, canvas: Canvas, group: sim.Group):
         for body in group.bodies:
             canvas.draw_body(body, self.fill, self.outline, self.layer)
+
+class BodyIndices(View):
+
+    layer: int
+
+    def __init__(self, layer: int = 0):
+        self.layer = layer
+
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.get(sim.IndexBodies):
+            for i, body in enumerate(m.bodies):
+                if body is None:
+                    continue
+                canvas.draw_text(f'{i}', body.position, layer=self.layer)
 
 class Lidars(View):
 

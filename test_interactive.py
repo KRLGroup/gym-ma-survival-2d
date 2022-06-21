@@ -56,6 +56,8 @@ def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
         if gif_fpath is not None and (i+1) % record_interval == 0:
             frames.append(frame)
         #print(f'observation = {observation}')
+        if done:
+            break
     print(f'done')
     env.close()
     if gif_fpath is not None:

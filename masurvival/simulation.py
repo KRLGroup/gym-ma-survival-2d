@@ -201,19 +201,62 @@ class Simulation:
 
 # basic concrete modules
 
+# utility module to assign indices to bodies in a group which are consistent 
+# also when bodies despawn; indices are assigned on reset based on the bodies 
+# currently in the group, so this module should come after modules that spawn 
+# any body that needs an index. This also conveniently tracks which bodies 
+# died from the last reset. The post_reset method can be also called directly 
+# to reset the indices using the bodies currently in the given group. NOTE 
+# that to get the index of a body that is about to die, a module must come 
+# before this since None will be assigned to its spot after this module's 
+# pre_despawn.
+class IndexBodies(Module):
+
+    bodies: List[Optional[b2Body]]
+
+    def post_reset(self, group: Group):
+        self.bodies = list(group.bodies)
+
+    def pre_despawn(self, bodies: List[b2Body]):
+        for body in bodies:
+            self.bodies[self.bodies.index(body)] = None
+
+# prints a death message when bodies despawn from the group, using body 
+# indices if available; mostly useful for debugging
+class LogDeaths(Module):
+
+    def post_reset(self, group: Group):
+        self.group = group
+
+    def pre_despawn(self, bodies: b2Body):
+        index_bodies = self.group.get(IndexBodies)
+        if len(index_bodies) == 0:
+            for body in bodies:
+                print(f'A body {body} despawned.')
+            return
+        for m in index_bodies:
+            for body in bodies:
+                index = m.bodies.index(body)
+                print(f'Body #{index} despawned.')
+
 class Lidars(Module):
 
     n_lasers: int
     fov: float
     depth: float
-    scans: List[List['LaserScan']] = []
-    origins: List[b2Vec2] = []
-    endpoints: List[List[b2Vec2]] = []
+    scans: List[List['LaserScan']]
+    origins: List[b2Vec2]
+    endpoints: List[List[b2Vec2]]
 
     def __init__(self, n_lasers: int, fov: float, depth: float):
         self.n_lasers = n_lasers
         self.fov = fov
         self.depth = depth
+
+    def post_reset(self, group: Group):
+        self.scans = [[] for body in group.bodies]
+        self.origins = []
+        self.endpoints = []
 
     def post_step(self, group: Group):
         self.origins = [body.position for body in group.bodies]
@@ -231,7 +274,6 @@ class Lidars(Module):
             endpoint = origin + from_polar(length=self.depth, angle=angle)
             endpoints.append(endpoint)
         return endpoints
-
 
 class DynamicMotors(Module):
 

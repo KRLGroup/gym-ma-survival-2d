@@ -24,6 +24,27 @@ def item_prototype(item_size: float):
     return sim.Prototype(sim.circle_shape(radius=item_size/2))
 
 
+# the battle royale mode: the game ends when there is only 1 agent/team left 
+# alive, which wins
+#TODO implement teams
+class BattleRoyale(sim.Module):
+
+    over: bool
+    # for each body in the body indices, True if it won False if it lost
+    results: List[bool]
+
+    def post_reset(self, group: sim.Group):
+        self.over = False
+
+    def post_step(self, group: sim.Group):
+        if len(group.bodies) > 1:
+            return
+        body_indices = group.get(sim.IndexBodies)
+        assert (len(body_indices) == 1)
+        self.over = True
+        self.results = [body is not None for body in body_indices[0].bodies]
+
+
 # random spawning
 
 # astract interface
@@ -97,8 +118,6 @@ class Item(sim.Module):
         for body in bodies:
             for fixture in body.fixtures:
                 fixture.sensor = True
-
-
 
 # adds a list inventory with a fixed number of slots to the bodies in its 
 # group; no other functionality is added, but the pickup, use, drop and 
