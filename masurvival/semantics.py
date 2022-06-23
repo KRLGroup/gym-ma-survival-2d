@@ -3,7 +3,7 @@ from typing import (
 from operator import attrgetter
 
 from Box2D import ( # type: ignore
-    b2Vec2, b2World, b2Body, b2CircleShape, b2Transform)
+    b2Vec2, b2World, b2Body, b2Shape, b2CircleShape, b2Transform)
 
 import numpy as np
 
@@ -52,7 +52,7 @@ class Spawner:
     def reset(self):
         pass
     def placements(self, n: int) -> List[b2Vec2]:
-        return []
+        return [b2Vec2(0,0)]*n
 
 class SpawnGrid(Spawner):
 
@@ -133,15 +133,29 @@ class Inventory(sim.Module):
     def full(self, body: b2Body):
         return len(self.inventories[body])
 
-    def pickup(self, body: b2Body, item: b2Body):
-        items = sim.Group.body_group(item).get(Item)
+    # returns False when inventory did not have enough empty slots
+    def take(self, body: b2Body, items: List[Item]) -> bool:
         inventory = self.inventories[body]
         if len(items) <= 0:
-            return
+            return False
         if len(items) + len(inventory) > self.slots:
-            return
+            return False
         inventory += items # type: ignore
-        sim.Group.despawn_body(item)
+        return True
+
+    def pickup(self, body: b2Body, item: b2Body):
+        items = sim.Group.body_group(item).get(Item)
+        if self.take(body, items):
+            sim.Group.despawn_body(item)
+
+    def give(self, src: b2Body, dest: b2Body, slot: int = -1):
+        try:
+            item = self.inventories[src].pop(slot)
+        except IndexError:
+            return
+        dest_inventories = sim.Group.body_group(dest).get(Inventory)
+        for inventory in dest_inventories:
+            inventory.take(dest, [item])
 
     def use(self, user: b2Body, slot: int = -1):
         try:
@@ -185,21 +199,21 @@ class Inventory(sim.Module):
 # the first inventory module it finds in the group
 class AutoPickup(sim.Module):
     
-    # half-size of the box used for pickup
-    range: float
+    # the transform of each body will be applied to it
+    shape: b2Shape
     
-    def __init__(self, range: float):
-        self.range = range
+    def __init__(self, shape: b2Shape):
+        self.shape = shape
 
     def post_step(self, group: sim.Group):
-        r = self.range
-        fixturess = [sim.aabb_query(group.world, body.position, r, r)
-                     for body in group.bodies]
-        itemss = [[f.body for f in fixtures] for fixtures in fixturess]
+        itemss = [sim.shape_query(group.world, self.shape, body.transform)
+                  for body in group.bodies]
         inventory = group.get(Inventory)[0]
         for body, items in zip(group.bodies, itemss):
             [inventory.pickup(body, item) for item in items]
 
+#TODO make it a discrete action which consumes the N-th-last item instead of 
+#the last
 # provides an use action which consumes the last item in each inventory of the 
 # body
 class UseLast(sim.Module):
@@ -223,6 +237,53 @@ class UseLast(sim.Module):
                 [inventory.use(user) for inventory in inventories]
         if not self.drift:
             self.uses = []
+
+class GiveLast(sim.Module):
+
+    shape: b2Shape
+    drift: bool
+    give: List[bool]
+    takers: List[Optional[b2Body]]
+
+    def __init__(self, shape: b2Shape, drift: bool = False):
+        self.shape = shape
+        self.drift = drift
+
+    def post_reset(self, group: sim.Group):
+        self.give = []
+        self._update_takers(group)
+
+    def pre_step(self, group: sim.Group):
+        missing = len(group.bodies) - len(self.give)
+        if missing > 0:
+            self.give += [False]*missing
+        inventories = group.get(Inventory)
+        for giver, taker, gives in zip(group.bodies, self.takers, self.give):
+            if gives and taker is not None:
+                [inventory.give(giver, taker) for inventory in inventories]
+        if not self.drift:
+            self.give = []
+
+    def post_step(self, group: sim.Group):
+        self._update_takers(group)
+
+    def _update_takers(self, group: sim.Group):
+        shape = self.shape
+        neighbourss = [sim.shape_query(group.world, shape, body.transform)
+                       for body in group.bodies]
+        self.takers = []
+        for body, neighbours in zip(group.bodies, neighbourss):
+            min_distance: float = float('inf')
+            taker: Optional[b2Body] = None
+            for neighbour in neighbours:
+                #TODO also check that the taker is in the right group
+                if neighbour == body:
+                    continue
+                distance: float = (body.position - neighbour.position).length
+                if distance < min_distance:
+                    min_distance = distance
+                    taker = neighbour
+            self.takers.append(taker)
 
 # drop items on death, scattering them randomly around the dead body; should 
 # be placed before the inventory module so that it can drop the items before 

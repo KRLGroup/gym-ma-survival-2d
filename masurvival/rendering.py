@@ -77,6 +77,15 @@ safe_zone_view_config = {
     'outlier_layer': 1,
 }
 
+give_view_config = {
+    'fill': None,
+    'outline': Color('green'),
+    'layer': 0,
+    'taker_fill': None,
+    'taker_outline': Color('green'),
+    'taker_layer': 1,
+}
+
 
 # each view should draw one aspect of the group (e.g. a module)
 #TODO actually, these could very well be sim.Module's?
@@ -340,7 +349,42 @@ class Inventory(View):
                 canvas.draw_text(
                     f'{len(inv)}', body.position + self.offset, self.font, 
                     self.foreground, self.background, self.layer)
- 
+
+class GiveLast(View):
+
+    fill: Optional[Color]
+    outline: Optional[Color]
+    layer: int
+    taker_fill: Optional[Color]
+    taker_outline: Optional[Color]
+    taker_layer: int
+    
+    def __init__(
+            self, fill: Optional[Color] = None,
+            outline: Optional[Color] = None, layer: int = 0,
+            taker_fill: Optional[Color] = None,
+            taker_outline: Optional[Color] = None, taker_layer: int = 0):
+        self.fill = fill
+        self.outline = outline
+        self.layer = layer
+        self.taker_fill = taker_fill
+        self.taker_outline = taker_outline
+        self.taker_layer = taker_layer
+
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.get(sem.GiveLast):
+            assert(isinstance(m.shape, b2CircleShape))
+            for body in group.bodies:
+                canvas.draw_circle(
+                    m.shape.radius, body.transform, self.fill, self.outline, 
+                    self.layer)
+            for taker in m.takers:
+                if taker is None:
+                    continue
+                canvas.draw_body(
+                    taker, self.taker_fill, self.taker_outline, 
+                    self.taker_layer)
+
 
 class Health(View):
 

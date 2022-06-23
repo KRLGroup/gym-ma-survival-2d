@@ -13,12 +13,12 @@ import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
     Health, Heal, Melee, Item, item_prototype, Inventory, AutoPickup, UseLast, 
-    DeathDrop, SafeZone, BattleRoyale)
+    DeathDrop, SafeZone, BattleRoyale, GiveLast)
 
 
 AgentObservation = List[sim.LaserScan]
 Observation = Tuple[AgentObservation, ...]
-AgentAction = Tuple[int, int, int, int, int]
+AgentAction = Tuple[int, int, int, int, int, int]
 Action = Tuple[AgentAction, ...]
 Reward = Tuple[float, ...]
 
@@ -73,7 +73,10 @@ default_config: Config = {
         'slots': 4,
     },
     'auto_pickup': {
-        'range': 0.5,
+        'shape': sim.circle_shape(0.5),
+    },
+    'give': {
+        'shape': sim.circle_shape(2),
     },
     'death_drop': {
         'radius': 0.5,
@@ -92,7 +95,7 @@ class MaSurvivalEnv(gym.Env):
     # See the default values for available params
     config: Dict[str, Any] = default_config
     # actions and observation spaces
-    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,3,2,2])
+    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,3,2,2,2])
     action_space: spaces.Space # changes based on number of agents
     observation_space: spaces.Space = NotImplemented
     # rendering
@@ -122,6 +125,7 @@ class MaSurvivalEnv(gym.Env):
         melee_config = self.config['melee']
         inventory_config = self.config['inventory']
         auto_pickup_config = self.config['auto_pickup']
+        give_config = self.config['give']
         death_drop_config = self.config['death_drop']
         safe_zone_config = self.config['safe_zone']
         self.spawner = SpawnGrid(**spawn_grid_config)
@@ -137,7 +141,8 @@ class MaSurvivalEnv(gym.Env):
             Inventory(**inventory_config),
             AutoPickup(**auto_pickup_config),
             UseLast(),
-            SafeZone(**safe_zone_config),
+            GiveLast(**give_config),
+            #SafeZone(**safe_zone_config),
             BattleRoyale()]
         boxes_config = self.config['boxes']
         box_size = boxes_config.pop('box_size')
@@ -181,7 +186,8 @@ class MaSurvivalEnv(gym.Env):
         info: Dict = {}
         return (obs, info) if return_info else obs # type: ignore
 
-    def step(self, action: Action) -> Tuple[Observation, Reward, bool, Dict]:
+    def step(self, # type: ignore
+            action: Action) -> Tuple[Observation, Reward, bool, Dict]:
         assert self.action_space.contains(action), "Invalid action."
         agents, boxes, heals, walls = self.simulation.groups
         self.queue_actions(agents, action)
@@ -218,6 +224,8 @@ class MaSurvivalEnv(gym.Env):
                         **rendering.melee_view_config), # type: ignore
                     rendering.Inventory(
                         **rendering.inventory_view_config), # type: ignore
+                    rendering.GiveLast(
+                        **rendering.give_view_config), # type: ignore
                 ],
                 boxes: [
                     rendering.Bodies(
@@ -258,10 +266,12 @@ class MaSurvivalEnv(gym.Env):
         for i, a in enumerate(actions):
             if bodies[i] is not None:
                 actions_alive.append(a)
-        controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions_alive]
-        agents.get(sim.DynamicMotors)[0].controls = controls
-        agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions_alive]
-        agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions_alive]
+        actions = actions_alive
+        motor_controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
+        agents.get(sim.DynamicMotors)[0].controls = motor_controls
+        agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
+        agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions]
+        agents.get(GiveLast)[0].give = [bool(a[5]) for a in actions]
 
     def compute_rewards(
             self, agents: sim.Group, sparse: bool) -> Tuple[float, ...]:

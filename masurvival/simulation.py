@@ -322,6 +322,24 @@ def laser_scan(world: b2World, start: Vec2, end: Vec2) -> LaserScan:
     assert(raycast.fixture is not None)
     return raycast.fixture, depth
 
+# returns all bodies whose center overalps with the given shape; it should be 
+# more efficient than iterating over all bodies and shape testing
+# only works with non-compound convex shapes
+def shape_query(
+        world: b2World, shape: b2Shape, 
+        transform: b2Transform) -> List[b2Body]:
+    # Only test bodies that are in the shape's AABB to avoid checking all 
+    # bodies in the world.
+    aabb = shape.getAABB(transform, 0)
+    callback = AllQueryCallback()
+    world.QueryAABB(callback, aabb)
+    bodies = []
+    for fixture in callback.fixtures:
+        body = fixture.body
+        if shape.TestPoint(transform, body.worldCenter):
+            bodies.append(body)
+    return bodies
+
 def aabb_query(
         world: b2World, center: b2Vec2, width: float,
         height: float) -> List[b2Fixture]:
