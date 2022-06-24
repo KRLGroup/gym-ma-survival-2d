@@ -13,7 +13,8 @@ import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
     Health, Heal, Melee, Item, item_prototype, Inventory, AutoPickup, UseLast, 
-    DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, ObjectItem)
+    DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, ObjectItem,
+    ImmunityPhase)
 
 
 AgentObservation = List[sim.LaserScan]
@@ -34,6 +35,9 @@ default_config: Config = {
     'spawn_grid': {
         'grid_size': 4,
         'floor_size': 20,
+    },
+    'immunity_phase': {
+        'cooldown': 300,
     },
     'agents': {
         'n_agents': 4,
@@ -126,6 +130,7 @@ class MaSurvivalEnv(gym.Env):
         agent_size = agents_config.pop('agent_size')
         agents_config['prototype'] = agent_prototype(agent_size)
         agents_config['n_spawns'] = agents_config.pop('n_agents')
+        immunity_phase_config = self.config['immunity_phase']
         lidar_config = self.config['lidars']
         motor_config = self.config['motors']
         health_config = self.config['health']
@@ -150,6 +155,7 @@ class MaSurvivalEnv(gym.Env):
             UseLast(),
             GiveLast(**give_config),
             #SafeZone(**safe_zone_config),
+            ImmunityPhase(**immunity_phase_config),
             BattleRoyale()]
         boxes_config = self.config['boxes']
         boxes_item_config = self.config['boxes_item']
@@ -228,6 +234,8 @@ class MaSurvivalEnv(gym.Env):
                 agents: [
                     rendering.SafeZone(
                         **rendering.safe_zone_view_config), # type: ignore
+                    rendering.ImmunityCooldown(
+                        **rendering.immunity_view_config), # type: ignore
                     rendering.Bodies(
                         **rendering.agent_bodies_view_config), # type: ignore
                     rendering.BodyIndices(

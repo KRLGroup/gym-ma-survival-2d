@@ -323,6 +323,8 @@ class Health(sim.Module):
 
     # starting health for all bodies with this module
     health: int
+    # can be set by others to disable damage and heal
+    immune: bool
     healths: Dict[b2Body, int]
 
     def __init__(self, health: int):
@@ -331,6 +333,7 @@ class Health(sim.Module):
     def post_reset(self, group: sim.Group):
         #TODO do this in post_spawn if attr is not set yet
         self.healths = {body: self.health for body in group.bodies}
+        self.immune = False
 
     def post_step(self, group: sim.Group):
         #TODO do this in post_spawn
@@ -345,12 +348,12 @@ class Health(sim.Module):
             del self.healths[body]
 
     def damage(self, body: b2Body, damage: int):
-        if body not in self.healths:
+        if self.immune or body not in self.healths:
             return
         self.healths[body] -= damage
 
     def heal(self, body: b2Body, healing: int):
-        if body not in self.healths:
+        if self.immune or body not in self.healths:
             return
         self.healths[body] += healing
 
@@ -362,6 +365,7 @@ class Melee(sim.Module):
     range: float
     damage: int
     drift: bool
+    #TODO init these in the post reset
     targets: List[Optional[b2Body]] = []
     origins: List[b2Vec2] = []
     endpoints: List[b2Vec2] = []
@@ -411,6 +415,31 @@ class Heal(Item):
         healths = sim.Group.body_group(user).get(Health)
         for health in healths:
             health.heal(user, self.healing) # type: ignore
+
+# disables PvP damage for a fixed amount of steps at reset
+class ImmunityPhase(sim.Module):
+    
+    cooldown: int
+    t: int
+    finished: bool
+    
+    def __init__(self, cooldown: int):
+        self.cooldown = cooldown
+    
+    def post_reset(self, group: sim.Group):
+        self.health = group.get(Health)[0]
+        self.health.immune = True
+        self.t = self.cooldown
+        self.finished = False
+    
+    def post_step(self, group: sim.Group):
+        if self.finished:
+            return
+        if self.t > 0:
+            self.t -= 1
+        if self.t == 0:
+            self.health.immune = False
+            self.finished = True
 
 
 # map features: safe zone, terrain, etc.
@@ -528,6 +557,9 @@ class SafeZone(sim.Module):
         shape = sim.circle_shape(radius)
         transform = sim.transform(translation=center)
         self.zone = (shape, transform)
+
+
+# breakable/placeable objects
 
 # objects in the group will be items that spawn objects when used; the spawned 
 # object is controlled by setting the 'object_prototype'. The object will be 

@@ -86,6 +86,10 @@ give_view_config = {
     'taker_layer': 1,
 }
 
+immunity_view_config = {
+    'layer': 2,
+}
+
 
 # each view should draw one aspect of the group (e.g. a module)
 #TODO actually, these could very well be sim.Module's?
@@ -108,7 +112,7 @@ class Canvas:
 
     def __init__(
             self, width: int, height: int, world_size: float,
-            render_mode: str = 'human', layers: int = 3, fps: int = 30, 
+            render_mode: str = 'human', layers: int = 4, fps: int = 30, 
             background: Color = background,
             views: Dict[sim.Group, List[View]] = {}):
         if render_mode not in ['human', 'rgb_array']:
@@ -449,6 +453,18 @@ class Melee(View):
         if target is None or not attack:
             return
         canvas.draw_body(target, self.fill, self.outline, self.layer)
+
+
+class ImmunityCooldown(View):
+
+    layer: int
+
+    def __init__(self, layer: int = 0):
+        self.layer = layer
+
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.get(sem.ImmunityPhase):
+            canvas.draw_text(f'{m.t}', canvas.topleft, layer=self.layer)
 
 
 #TODO implement alpha (see https://stackoverflow.com/questions/6339057/draw-a-transparent-rectangles-and-polygons-in-pygame)
