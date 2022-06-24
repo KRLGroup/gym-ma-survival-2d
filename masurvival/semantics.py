@@ -97,6 +97,7 @@ class ResetSpawns(sim.Module):
 # information in them.
 class Item(sim.Module):
 
+    # can be accessed by subclasses
     group: sim.Group
     # should be set by subclasses
     prototype: sim.Prototype
@@ -149,11 +150,13 @@ class Inventory(sim.Module):
             sim.Group.despawn_body(item)
 
     def give(self, src: b2Body, dest: b2Body, slot: int = -1):
+        dest_inventories = sim.Group.body_group(dest).get(Inventory)
+        if len(dest_inventories) == 0:
+            return
         try:
             item = self.inventories[src].pop(slot)
         except IndexError:
             return
-        dest_inventories = sim.Group.body_group(dest).get(Inventory)
         for inventory in dest_inventories:
             inventory.take(dest, [item])
 
@@ -525,6 +528,68 @@ class SafeZone(sim.Module):
         shape = sim.circle_shape(radius)
         transform = sim.transform(translation=center)
         self.zone = (shape, transform)
+
+# objects in the group will be items that spawn objects when used; the spawned 
+# object is controlled by setting the 'object_prototype'. The object will be 
+# spawned with the given offset in the direction of the user. 'placements' is 
+# used to queue places where items of this kind are to be spawned at the next 
+# pre step.
+class ObjectItem(Item):
+
+    # should be set by Object's; the group and prototype used for placing 
+    # objects back in the world
+    object_group: sim.Group
+    object_prototype: sim.Prototype
+    prototype: sim.Prototype
+    offset: float
+    group: sim.Group
+    # adding to this list makes the group spawn items in that places at the 
+    # next pre step
+    placements: List[b2Vec2]
+
+    def __init__(self, prototype: sim.Prototype, offset: float):
+        self.prototype = prototype
+        self.offset = offset
+
+    def post_reset(self, group: sim.Group):
+        self.group = group
+        self.placements = []
+
+    def pre_step(self, group: sim.Group):
+        group.spawn([self.prototype]*len(self.placements), self.placements)
+        self.placements = []
+
+    def use(self, user: b2Body):
+        offset = sim.from_polar(self.offset, user.angle)
+        self.object_group.spawn([self.object_prototype],
+                         [user.position + offset])
+
+# things that, instead of completely despawning, drop as items when killed; 
+# the dropped item will then spawn back the original object
+class Object(sim.Module):
+
+    item: ObjectItem
+    placements: List[b2Vec2]
+    group: sim.Group
+
+    def __init__(self, item: ObjectItem):
+        self.item = item
+
+    def post_reset(self, group: sim.Group):
+        self.group = group
+        self.placements = []
+
+    def pre_despawn(self, bodies: List[b2Body]):
+        if len(bodies) == 0:
+            return
+        if not hasattr(self.item, 'object_group'):
+            self.item.object_group = self.group
+            self.item.object_prototype = sim.prototype(bodies[0])
+        self.placements += [body.position for body in bodies]
+
+    def post_step(self, group: sim.Group):
+        self.item.placements += self.placements
+        self.placements = []
 
 
 # utilties

@@ -6,7 +6,7 @@ from Box2D import ( # type: ignore
     b2World, b2ContactListener, b2Body, b2Fixture, b2FixtureDef, b2Shape, 
     b2CircleShape, b2PolygonShape, b2Joint, b2RayCastCallback, b2Vec2, 
     b2Mat22, b2Transform, b2_staticBody, b2_dynamicBody, b2AABB, 
-    b2QueryCallback)
+    b2QueryCallback, b2ChainShape, b2EdgeShape)
 
 
 _T = TypeVar('_T')
@@ -79,8 +79,8 @@ class Module:
 
 # utiltiy type to pack Box2D body definitions
 
-default_density = 1.
-default_restitution = 0.
+default_density = 1
+default_restitution = 0
 default_damping = 0.8
 
 class Prototype(NamedTuple):
@@ -90,6 +90,15 @@ class Prototype(NamedTuple):
     restitution: float = default_restitution
     damping: float = default_damping
     sensor: bool = False
+
+def prototype(body: b2Body) -> Prototype:
+    return Prototype(
+        shape=copy_shape(body.fixtures[0].shape),
+        dynamic=body.type is b2_dynamicBody,
+        density=body.fixtures[0].density,
+        restitution=body.fixtures[0].restitution,
+        damping=body.linearDamping,
+        sensor=body.fixtures[0].sensor)
 
 # either position or position and orientation
 Placement = Union[Vec3, Vec2]
@@ -377,3 +386,24 @@ class AllQueryCallback(b2QueryCallback):
         self.fixtures.append(fixture)
         return True
 
+def copy_shape(shape: b2Shape):
+    if isinstance(shape, b2CircleShape):
+        return _copy_circle_shape(shape)
+    if isinstance(shape, b2PolygonShape):
+        return _copy_polygon_shape(shape)
+    if isinstance(shape, b2ChainShape):
+        return _copy_chain_shape(shape)
+    if isinstance(shape, b2EdgeShape):
+        return _copy_edge_shape(shape)
+
+def _copy_circle_shape(shape: b2CircleShape):
+    return b2CircleShape(radius=shape.radius)
+
+def _copy_polygon_shape(shape: b2PolygonShape):
+    return b2PolygonShape(vertices=shape.vertices)
+
+def _copy_chain_shape(shape: b2ChainShape):
+    return b2ChainShape(vertices=shape.vertices)
+
+def _copy_edge_shape(shape: b2EdgeShape):
+    return b2EdgeShape(vertices=shape.vertices)
