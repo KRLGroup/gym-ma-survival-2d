@@ -90,6 +90,15 @@ immunity_view_config = {
     'layer': 2,
 }
 
+cameras_view_config = {
+    'fill': None,
+    'outline': Color('gray'),
+    'layer': 0,
+    'seen_fill': None,
+    'seen_outline': Color('indianred2'),
+    'seen_layer': 1,
+}
+
 
 # each view should draw one aspect of the group (e.g. a module)
 #TODO actually, these could very well be sim.Module's?
@@ -286,6 +295,37 @@ class BodyIndices(View):
                 if body is None:
                     continue
                 canvas.draw_text(f'{i}', body.position, layer=self.layer)
+
+class Cameras(View):
+
+    fill: Optional[Color]
+    outline: Optional[Color]
+    layer: int
+    seen_fill: Optional[Color]
+    seen_outline: Optional[Color]
+    seen_layer: int
+
+    def __init__(
+            self, fill: Optional[Color] = None,
+            outline: Optional[Color] = None, layer: int = 0,
+            seen_fill: Optional[Color] = None,
+            seen_outline: Optional[Color] = None, seen_layer: int = 0):
+        self.fill = fill
+        self.outline = outline
+        self.layer = layer
+        self.seen_fill = seen_fill
+        self.seen_outline = seen_outline
+        self.seen_layer = seen_layer
+
+    def draw(self, canvas: Canvas, group: sim.Group):
+        cams = group.get(sim.Cameras)[0]
+        for body, seens in zip(group.bodies, cams.seen):
+            canvas.draw_polygon(
+                cams.vision_cone, body.transform, self.fill, self.outline, 
+                self.layer)
+            for seen in seens:
+                canvas.draw_body(
+                    seen, self.seen_fill, self.seen_outline, self.seen_layer)
 
 class Lidars(View):
 

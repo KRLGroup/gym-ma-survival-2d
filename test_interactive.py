@@ -39,7 +39,7 @@ Q: give item (last picked up)
 """
 
 def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
-    env = MaSurvivalEnv()
+    env = MaSurvivalEnv(omniscent=False)
     print(controls_doc)
     env.reset()
     frames: List[np.ndarray] = []

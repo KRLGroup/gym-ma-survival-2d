@@ -27,6 +27,29 @@ def transform(translation: b2Vec2 = b2Vec2(0,0), angle: float = 0):
     T.Set(position=translation, angle=angle)
     return T
 
+def copy_shape(shape: b2Shape):
+    if isinstance(shape, b2CircleShape):
+        return _copy_circle_shape(shape)
+    if isinstance(shape, b2PolygonShape):
+        return _copy_polygon_shape(shape)
+    if isinstance(shape, b2ChainShape):
+        return _copy_chain_shape(shape)
+    if isinstance(shape, b2EdgeShape):
+        return _copy_edge_shape(shape)
+
+def _copy_circle_shape(shape: b2CircleShape):
+    return b2CircleShape(radius=shape.radius)
+
+def _copy_polygon_shape(shape: b2PolygonShape):
+    newshape = b2PolygonShape(vertices=shape.vertices)
+    return newshape
+
+def _copy_chain_shape(shape: b2ChainShape):
+    return b2ChainShape(vertices=shape.vertices)
+
+def _copy_edge_shape(shape: b2EdgeShape):
+    return b2EdgeShape(vertices=shape.vertices)
+
 def square_shape(side: float) -> b2Shape:
     return b2PolygonShape(box=(side/2., side/2.))
 
@@ -35,6 +58,17 @@ def rect_shape(width: float, height: float) -> b2Shape:
 
 def circle_shape(radius: float) -> b2Shape:
     return b2CircleShape(radius=radius)
+
+# Return width and height of a shape assuming it's a box.
+def rect_dimensions(shape: b2PolygonShape) -> Tuple[float, float]:
+    vertices = [b2Vec2(v) for v in shape.vertices]
+    width, height = 0, 0
+    for v, w in zip(vertices, [*vertices[1:], vertices[0]]):
+        if width == 0  and v[0] != w[0] and v[1] == w[1]:
+            width =  (w - v).length
+        if height == 0 and v[1] != w[1] and v[0] == w[0]:
+            height = (w - v).length
+    return width, height
 
 
 # creating bodies with modular behaviour
@@ -179,32 +213,32 @@ class Simulation:
     time_step: float
     velocity_iterations: int
     position_iterations: int
-    groups: List[Group] = []
+    groups: Dict[str, Group]
 
     def __init__(
             self, substeps: int = 2, time_step: float = 1/60, 
             velocity_iterations: int = 10, position_iterations: int = 10,
-            groups: List[Group] = []):
+            groups: Dict[str, Group] = {}):
         self.substeps = substeps
         self.time_step = time_step
         self.velocity_iterations = velocity_iterations
         self.position_iterations = position_iterations
-        self.groups += groups
+        self.groups = groups
 
     def reset(self):
         self.world = b2World(gravity=(0, 0), doSleep=True)        
-        for group in self.groups:
+        for group in self.groups.values():
             group.reset(self.world)
 
     def step(self):
-        for group in self.groups:
+        for group in self.groups.values():
             group.pre_step()
         for _ in range(self.substeps):
             self.world.Step(
                 self.time_step, self.velocity_iterations, 
                 self.position_iterations)
         self.world.ClearForces()
-        for group in self.groups:
+        for group in self.groups.values():
             group.post_step()
 
 
@@ -248,6 +282,49 @@ class LogDeaths(Module):
                 index = m.bodies.index(body)
                 print(f'Body #{index} despawned.')
 
+# 2D "cameras", i.e. detects bodies with LOS inside its FOV, assuming the 
+# cameras are placed at the positions of bodies in the group. For the sake of 
+# simplicity, 2 approximations are used: LOS is only checked to for the 
+# position of each body (not the full shape), and the vision cone is actually 
+# a triangle (instead of a slice of a circle).
+class Cameras(Module):
+
+    depth: float
+    fov: float
+    vision_cone: b2PolygonShape
+    seen: List[List[b2Body]]
+
+    def __init__(self, depth: float, fov: float):
+        self.depth = depth
+        self.fov = fov
+        left = from_polar(self.depth, +self.fov/2)
+        center = b2Vec2(self.depth, 0)
+        right = from_polar(self.depth, -self.fov/2)
+        self.vision_cone = b2PolygonShape(
+            vertices=[b2Vec2(0,0), left, center, right])
+
+    def post_reset(self, group: Group):
+        self._update_seen(group)
+
+    def post_step(self, group: Group):
+        self._update_seen(group)
+
+    def _update_seen(self, group: Group):
+        self.seen = []
+        for body in group.bodies:
+            # Get all bodies inside the vision cone.
+            others = shape_query(
+                group.world, self.vision_cone, body.transform)
+            # Check LOS.
+            self.seen.append([])
+            for other in others:
+                if other == body:
+                    continue
+                scan = laser_scan(group.world, body.position, other.position)
+                if scan[0].body == other: # type: ignore
+                    self.seen[-1].append(scan[0].body) # type: ignore
+
+
 class Lidars(Module):
 
     n_lasers: int
@@ -263,11 +340,12 @@ class Lidars(Module):
         self.depth = depth
 
     def post_reset(self, group: Group):
-        self.scans = [[] for body in group.bodies]
-        self.origins = []
-        self.endpoints = []
+        self._update(group)
 
     def post_step(self, group: Group):
+        self._update(group)
+
+    def _update(self, group: Group):
         self.origins = [body.position for body in group.bodies]
         orientations = [body.angle for body in group.bodies]
         self.endpoints = [self._endpoints(p, a)
@@ -385,25 +463,3 @@ class AllQueryCallback(b2QueryCallback):
     def ReportFixture(self, fixture):
         self.fixtures.append(fixture)
         return True
-
-def copy_shape(shape: b2Shape):
-    if isinstance(shape, b2CircleShape):
-        return _copy_circle_shape(shape)
-    if isinstance(shape, b2PolygonShape):
-        return _copy_polygon_shape(shape)
-    if isinstance(shape, b2ChainShape):
-        return _copy_chain_shape(shape)
-    if isinstance(shape, b2EdgeShape):
-        return _copy_edge_shape(shape)
-
-def _copy_circle_shape(shape: b2CircleShape):
-    return b2CircleShape(radius=shape.radius)
-
-def _copy_polygon_shape(shape: b2PolygonShape):
-    return b2PolygonShape(vertices=shape.vertices)
-
-def _copy_chain_shape(shape: b2ChainShape):
-    return b2ChainShape(vertices=shape.vertices)
-
-def _copy_edge_shape(shape: b2EdgeShape):
-    return b2EdgeShape(vertices=shape.vertices)

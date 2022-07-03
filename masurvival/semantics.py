@@ -18,7 +18,7 @@ def agent_prototype(agent_size: float) -> sim.Prototype:
 
 def box_prototype(box_size: float) -> sim.Prototype:
     shape = sim.rect_shape(width=box_size, height=box_size)
-    return sim.Prototype(shape=shape)
+    return sim.Prototype(shape=shape, dynamic=False)
 
 def item_prototype(item_size: float):
     return sim.Prototype(sim.circle_shape(radius=item_size/2))
