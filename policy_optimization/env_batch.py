@@ -32,8 +32,8 @@ class EnvBatch:
             self.data = data
         steps = [env.step(actions[i].numpy()) for i, env in enumerate(self.envs)]
         observations = torch.tensor(np.array([step[0] for step in steps]), dtype=self.dtype)
-        self.rewards = torch.tensor([step[1] for step in steps], dtype=self.dtype)
-        self.dones = torch.tensor([step[2] for step in steps], dtype=self.dtype)
+        self.rewards = torch.tensor(np.array([step[1] for step in steps]), dtype=self.dtype)
+        self.dones = torch.tensor(np.array([step[2] for step in steps]), dtype=self.dtype)
         for i, done in enumerate(self.dones):
             if not done:
                 continue

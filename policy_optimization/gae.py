@@ -3,6 +3,7 @@ from typing import Tuple, Optional, Any, List
 import torch
 
 
+# assumes the first dimension indexes time steps, and all others are batch sizes
 def general_advantage_estimation(rewards, values, dones, values_next, dones_next, gamma: float, lambda_: float) -> Tuple[torch.Tensor, torch.Tensor]:
     #TODO implement with cumsum?
     n_steps = rewards.size(0)

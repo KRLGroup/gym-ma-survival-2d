@@ -146,6 +146,162 @@ class EgocentricHiveMind(nn.Module):
         return actions, logprobs, entropies
 
 
+# same as single-agent, but assumes the first dimension of the observation shape indexes over agents, and is treated as if it was a batch size (i.e. the size of the model is independent of it); can be used for MA envs as a shared policy (inserting agent-specific info into the observations is up to the user)
+class SimpleLstmHiveMind(nn.Module):
+
+    #TODO annotate attrs
+
+    # n_observations is the size of the obs for a single agent
+    def __init__(self, n_observations: int, n_actions: int):
+        super().__init__()
+        self.network = nn.Sequential(
+            layer_init(nn.Linear(n_observations, 128)),
+            nn.Tanh(),
+            layer_init(nn.Linear(128, 128)),
+            nn.Tanh(),
+            layer_init(nn.Linear(128, 64), std=0.01),
+        )
+        self.lstm = nn.LSTM(64, 32)
+        for name, param in self.lstm.named_parameters():
+            if "bias" in name:
+                nn.init.constant_(param, 0)
+            elif "weight" in name:
+                nn.init.orthogonal_(param, 1.0)
+        self.logits = layer_init(nn.Linear(32, n_actions), std=0.01)
+
+    def zero_lstm_state(self, batch_size: int, n_agents: int) -> List[torch.Tensor]:
+        return repeat(torch.zeros, 2, 1, batch_size, n_agents, self.lstm.hidden_size)
+
+    # takes shapes (1, B, A, S) for each state
+    def set_lstm_state(self, lstm_state):
+        self.batch_size = lstm_state[0].size(1)
+        self.lstm_state = [s.flatten(start_dim=1, end_dim=2) for s in lstm_state]
+
+    # returns states in shape (1, B, A, S)
+    def get_lstm_state(self):
+        return [s.unflatten(1, [self.batch_size, s.size(1)//self.batch_size]) for s in self.lstm_state]
+
+    # - x: (L, B, A, X)
+    # - done: (L, B)
+    # - action: (L, B, A)
+    # - lstm state(s) should be set with set_lstm_state
+    # outputs have same shape as action (as if it was given)
+    # where:
+    # - L := time steps
+    # - B := batch size
+    # - A := number of agents
+    # - X := shape/size of a single agent's observation
+    # - S := hidden size of the lstm
+    def forward(self, x: torch.Tensor, done: torch.Tensor, action: Optional[torch.Tensor] = None, deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert torch.all(self.batch_size == torch.tensor([x.size(1), done.size(1)]))
+        if action is not None:
+            assert action.size(1) == self.batch_size
+        # shape: (L, B, A, ...)
+        z_network = self.network(x)
+        #TODO test if this can directly be allocated as tensor of appropriate shape
+        zs_lstm = []
+        # Unroll the LSTM manually since we need to intercept the state at each time step.
+        for t in range(x.size(0)):
+            # Reset the LSTM states of envs that were just reset to 0s. 
+            self.lstm_state = [self.lstm_state[i] * (1. - done[t].repeat_interleave(repeats=self.lstm_state[0].size(1) // self.batch_size, dim=-1).unsqueeze(-1)) for i in [0, 1]]
+            # (1, B*A, ...) and (1, B*A, S)
+            z_lstm_t_flat, self.lstm_state = self.lstm(
+                # (L=1, B*A, ...) ; slice is to avoid deleting the dimension
+                z_network[t:t+1].flatten(start_dim=1, end_dim=2),
+                # (1, B*A, S)
+                self.lstm_state
+            )
+            # (1, B, A, ...)
+            z_lstm_t = z_lstm_t_flat.unflatten(1, [x.size(1), x.size(2)])
+            zs_lstm.append(z_lstm_t)
+        self.lstm_state = list(self.lstm_state)
+        # (L, B, A, ...)
+        z_lstm = torch.cat(zs_lstm, dim=0)
+        logits = self.logits(z_lstm)
+        distr = Categorical(logits=logits)
+        if action is None:
+            action = distr.mode if deterministic else distr.sample()
+        logprob = distr.log_prob(action)
+        entropy = distr.entropy()
+        return action, logprob, entropy
+
+# same as single-agent, but assumes the first dimension of the observation shape indexes over agents, and is treated as if it was a batch size (i.e. the size of the model is independent of it); can be used for MA envs as a shared policy (inserting agent-specific info into the observations is up to the user)
+class SimpleLstmHiveMindCritic(nn.Module):
+
+    #TODO annotate attrs
+
+    # n_observations is the size of the obs for a single agent
+    def __init__(self, n_observations: int):
+        super().__init__()
+        self.network = nn.Sequential(
+            layer_init(nn.Linear(n_observations, 128)),
+            nn.Tanh(),
+            layer_init(nn.Linear(128, 128)),
+            nn.Tanh(),
+            layer_init(nn.Linear(128, 64), std=0.01),
+        )
+        self.lstm = nn.LSTM(64, 32)
+        for name, param in self.lstm.named_parameters():
+            if "bias" in name:
+                nn.init.constant_(param, 0)
+            elif "weight" in name:
+                nn.init.orthogonal_(param, 1.0)
+        self.value = layer_init(nn.Linear(32, 1), std=0.01)
+
+    # The LSTM state is internally stored with shape (L, B*A, S), but can be accessed more conveniently with the functions below.
+
+    def zero_lstm_state(self, batch_size: int, n_agents: int) -> List[torch.Tensor]:
+        return repeat(torch.zeros, 2, 1, batch_size, n_agents, self.lstm.hidden_size)
+
+    # takes shapes (1, B, A, S) for each state
+    def set_lstm_state(self, lstm_state):
+        self.batch_size = lstm_state[0].size(1)
+        self.lstm_state = [s.flatten(start_dim=1, end_dim=2) for s in lstm_state]
+
+    # returns states in shape (1, B, A, S)
+    def get_lstm_state(self):
+        return [s.unflatten(1, [self.batch_size, s.size(1)//self.batch_size]) for s in self.lstm_state]
+
+    # - x: (L, B, A, X)
+    # - done: (L, B)
+    # - action: (L, B, A)
+    # - lstm state(s) should be set with set_lstm_state
+    # outputs have same shape as action (as if it was given)
+    # where:
+    # - L := time steps
+    # - B := batch size
+    # - A := number of agents
+    # - X := shape/size of a single agent's observation
+    # - S := hidden size of the lstm
+    def forward(self, x: torch.Tensor, done: torch.Tensor, action: Optional[torch.Tensor] = None, deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert torch.all(self.batch_size == torch.tensor([x.size(1), done.size(1)]))
+        if action is not None:
+            assert action.size(1) == self.batch_size
+        # shape: (L, B, A, ...)
+        z_network = self.network(x)
+        #TODO test if this can directly be allocated as tensor of appropriate shape
+        zs_lstm = []
+        # Unroll the LSTM manually since we need to intercept the state at each time step.
+        for t in range(x.size(0)):
+            # Reset the LSTM states of envs that were just reset to 0s, broadcasting the done flags to all agents.
+            self.lstm_state = [self.lstm_state[i] * (1. - done[t].repeat_interleave(repeats=self.lstm_state[0].size(1) // self.batch_size, dim=-1).unsqueeze(-1)) for i in [0, 1]]
+            # (1, B*A, ...) and (1, B*A, S)
+            z_lstm_t_flat, self.lstm_state = self.lstm(
+                # (L=1, B*A, ...) ; slice is to avoid deleting the dimension
+                z_network[t:t+1].flatten(start_dim=1, end_dim=2),
+                # (1, B*A, S)
+                self.lstm_state
+            )
+            # (1, B, A, ...)
+            z_lstm_t = z_lstm_t_flat.unflatten(1, [x.size(1), x.size(2)])
+            zs_lstm.append(z_lstm_t)
+        self.lstm_state = list(self.lstm_state)
+        # (L, B, A, ...)
+        z_lstm = torch.cat(zs_lstm, dim=0)
+        value = self.value(z_lstm)
+        return value.squeeze(-1)
+
+
 class SimpleLstmActor(nn.Module):
 
     #TODO annotate attrs
