@@ -31,19 +31,20 @@ def assert_dim(x, dim):
 class EgocentricHiveMind(nn.Module):
 
     #TODO initialize layers like in h&s
+    #TODO add layer norms
 
     def __init__(self, action_space: Tuple[int, ...], x_agent_size: int, x_lidar_size: int, entity_keys: List[str], lidar_conv_features: int = 9, lidar_conv_kernel_size: int = 3, entity_features: int = 64, attention_heads: int = 4, attention_head_size: int = 16, lstm_input_features: int = 128, lstm_size: int = 128):
         super().__init__()
         assert entity_features % 2 == 0
         self.entity_keys = entity_keys
-        def _input_sizes(self, entity_sizes: Dict[int, str], seq_length: int = 1, batch_size: int = 1, n_entities: int = 1):
+        def _input_sizes(self, entity_sizes: Dict[int, str], seq_length: int = 1, batch_size: int = 1, n_agents: int = 1, n_entities: int = 1):
             return (
                 # self
-                (seq_length, batch_size, x_agent_size),
+                (seq_length, batch_size, n_agents, x_agent_size),
                 # lidar
-                (seq_length, batch_size, x_lidar_size),
+                (seq_length, batch_size, n_agents, x_lidar_size),
                 # entities
-                {k: (seq_length, batch_size, n_entities, v) for k, v in entity_sizes.items()},
+                {k: (seq_length, batch_size, n_agents, n_entities, v) for k, v in entity_sizes.items()},
                 # done
                 (seq_length, batch_size)
             )
@@ -66,59 +67,92 @@ class EgocentricHiveMind(nn.Module):
     def input_sizes(self):
         raise NotImplementedError
 
-    def zero_inputs(self, entity_sizes: Dict[str, int], seq_length: int = 1, batch_size: int = 1, n_entities: int = 1):
-        sizes = list(self.input_sizes(entity_sizes, seq_length, batch_size, n_entities))
+    def zero_inputs(self, entity_sizes: Dict[str, int], seq_length: int = 1, batch_size: int = 1, n_agents: int = 1, n_entities: int = 1):
+        sizes = list(self.input_sizes(entity_sizes, seq_length, batch_size, n_agents, n_entities))
         return recursive_apply(lambda sz: torch.zeros(sz), sizes)
 
-    def zero_lstm_state(self, batch_size: int = 1):
-        return [torch.zeros(1, batch_size, self.lstm.hidden_size) for _ in [0,1]]
+    def zero_lstm_state(self, batch_size: int = 1, n_agents: int = 1):
+        self.batch_size = batch_size
+        return repeat(torch.zeros, 2, 1, batch_size, n_agents, self.lstm.hidden_size)
 
-    # For input sizes see _input_sizes in __init__. Only accepts batched inputs for now.
-    #TODO also accept non-batched input
+    # takes shapes (1, B, A, S) for each state
+    def set_lstm_state(self, lstm_state):
+        self.batch_size = lstm_state[0].size(1)
+        self.lstm_state = [s.flatten(start_dim=1, end_dim=2) for s in lstm_state]
+
+    # returns states in shape (1, B, A, S)
+    def get_lstm_state(self):
+        return [s.unflatten(1, [self.batch_size, s.size(1)//self.batch_size]) for s in self.lstm_state]
+
+    # For input sizes see _input_sizes in __init__ or below.
+    # input shapes:
+    # - x_agent: (L, B, A, -1)
+    # - x_lidar: (L, B, A, -1)
+    # - each element of x_entities: (L, B, A, n ents, -1)
+    # - done: (L, B)
+    # output shapes:
+    # - all (L, B, A, action dim)
     #TODO support masking entities (e.g. because of padded entities in batches)
     def forward(self, x_agent: torch.Tensor, x_lidar: torch.Tensor, x_entities: Dict[str, torch.Tensor], done: torch.Tensor, actions: Optional[List[torch.Tensor]] = None, deterministic: bool = False):
 
-        [assert_dim(x, 3) for x in [x_agent, x_lidar] + ([actions] if actions is not None else [])]
-        recursive_apply(lambda x: assert_dim(x, 4), x_entities)
+        [assert_dim(x, 4) for x in [x_agent, x_lidar] + ([actions] if actions is not None else [])]
+        recursive_apply(lambda x: assert_dim(x, 5), x_entities)
         assert_dim(done, 2)
 
+        # shape: (L, B, A, -)
         z_lidar = torch.flatten(
             F.relu(
-                map_double_batched(
-                    self.lidar_conv, x_lidar.unsqueeze(-2)
-                )
+                self.lidar_conv(
+                    # shape: (L*B*A, 1, -)
+                    x_lidar.unsqueeze(-2).flatten(end_dim=2)
+                # shape: (L, B, A, -, -)
+                ).unflatten(0, [x_lidar.size(0), x_lidar.size(1), x_lidar.size(2)])
             ),
-            start_dim=2
+            start_dim=-2
         )
+        # shape: (L, B, A, -)
         x_self = torch.cat([x_agent, z_lidar], axis=-1)
         #TODO is the agent itself counted as an entity? the openreview comments seem to implicate both options (inclusion is also suggested by the figure in the paper, although not from its appendix B)
-        z_entities_list = [F.relu(self.self_dense(torch.cat([x_self, x_self], axis=-1))).unsqueeze(-2)]
+        z_entities_list = [
+            # shape: (L, B, A, 1, -)
+            F.relu(self.self_dense(torch.cat([x_self, x_self], axis=-1))).unsqueeze(-2)
+        ]
         for k in self.entity_keys:
+            # shape: (L, B, A, -, -)
             x = x_entities[k]
             z_entities_list.append(
                 F.relu(
                         self.entity_denses[k](
+                            # shape: (L, B, A, -, -)
                             torch.cat([
                                 x,
-                                x_self.unsqueeze(-2).expand(-1, -1, x.size(-2), -1)
+                                # shape: (L, B, A, -, -)
+                                x_self.unsqueeze(-2).expand(-1, -1, -1, x.size(-2), -1)
                             ], axis=-1)
                     )
                 )
             )
+        # shape: (L, B, A, -, -)
         z_entities = torch.cat(z_entities_list, axis=-2)
-
+        
+        # shape: (L*B*A, -, -)
+        z_entities_flat = z_entities.flatten(end_dim=2)
         residual_sa = z_entities + F.relu(
             self.sa_dense(
-                map_double_batched(
-                    self.mh_attention, z_entities, z_entities, z_entities
-                )[0]
+                # shape: (L*B*A, -, -)
+                self.mh_attention(
+                    z_entities_flat, z_entities_flat, z_entities_flat
+                # shape: (L, B, A, -, -)
+                )[0].unflatten(0, [z_entities.size(0), z_entities.size(1), z_entities.size(2)])
             )
         )
 
         #TODO is this correct? seems so from the author's comments on openreview
         # "Avg pool" across entities: see https://openreview.net/forum?id=SkxpxJBKwS&noteId=BJxWUARNsr and https://openreview.net/forum?id=SkxpxJBKwS&noteId=ryeCRG40Or for details
         #TODO use the mask
+        # shape: (L, B, A, -)
         z_pool = torch.mean(residual_sa, dim=-2)
+        # shape: (L, B, A, -)
         z = F.relu(
             self.pool_dense(
                 torch.cat([x_self, z_pool], axis=-1)
@@ -127,14 +161,25 @@ class EgocentricHiveMind(nn.Module):
 
         zs_lstm = []
         # Unroll the LSTM manually since we need to intercept the state at each time step.
-        for t in range(x.size(0)):
+        for t in range(z.size(0)):
             # Reset the LSTM states of envs that were just reset to 0s. 
-            self.lstm_state = [self.lstm_state[i] * (1. - done[t]).view(1, -1, 1) for i in [0, 1]]
-            #print(f'zsize: {z_network.size()}, hsize: {self.lstm_state[0].size()}')
-            z_lstm_t, self.lstm_state = self.lstm(z[t].unsqueeze(0), self.lstm_state)
+            self.lstm_state = [self.lstm_state[i] * (1. - done[t].repeat_interleave(repeats=self.lstm_state[0].size(1) // self.batch_size, dim=-1).unsqueeze(-1)) for i in [0, 1]]
+            # (1, B*A, -) and (1, B*A, S)
+            z_lstm_t_flat, self.lstm_state = self.lstm(
+                # (L=1, B*A, -) ; slice is to avoid deleting dim 0
+                z[t:t+1].flatten(start_dim=1, end_dim=2),
+                # (1, B*A, S)
+                self.lstm_state
+            )
+            # (1, B, A, -)
+            z_lstm_t = z_lstm_t_flat.unflatten(1, [z.size(1), z.size(2)])
             zs_lstm.append(z_lstm_t)
         self.lstm_state = list(self.lstm_state)
+        # (L, B, A, -)
         z_lstm = torch.cat(zs_lstm, dim=0)
+        #TODO add softmax activations to heads?
+        # each head outputs (L, B, A, n actions)
+        # each distr has samples of shape (L, B, A)
         distrs = [Categorical(logits=head(z_lstm)) for head in self.heads]
         if actions is None:
             if deterministic:
@@ -142,7 +187,7 @@ class EgocentricHiveMind(nn.Module):
             else:
                 actions = torch.cat([distr.sample().unsqueeze(-1) for distr in distrs], axis=-1)
         entropies = torch.cat([distr.entropy().unsqueeze(-1) for distr in distrs], axis=-1)
-        logprobs = torch.cat([distrs[i].log_prob(actions[:,:,i]).unsqueeze(-1) for i in range(actions.size(0))], axis=-1)
+        logprobs = torch.cat([distrs[i].log_prob(actions.select(-1, i)).unsqueeze(-1) for i in range(actions.size(0))], axis=-1)
         return actions, logprobs, entropies
 
 
