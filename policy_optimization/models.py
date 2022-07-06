@@ -25,7 +25,11 @@ def map_double_batched(f, *args):
         return flat_outputs.unflatten(0, batch_sizes)
 
 def assert_dim(x, dim):
-    assert x.dim() == dim, f'Invalid number of dimensions: {x.dim()}, expected {dim}'
+    if isinstance(dim, list):
+        assert x.dim() in dim, f'Invalid number of dimensions: {x.dim()}, expected one of {dim}'
+    else:
+        assert x.dim() == dim, f'Invalid number of dimensions: {x.dim()}, expected {dim}'
+    return True
 
 
 class EgocentricHiveMind(nn.Module):
@@ -44,7 +48,9 @@ class EgocentricHiveMind(nn.Module):
                 # lidar
                 (seq_length, batch_size, n_agents, x_lidar_size),
                 # entities
-                {k: (seq_length, batch_size, n_agents, n_entities, v) for k, v in entity_sizes.items()},
+                {k: [(seq_length, batch_size, n_agents, n_entities, v),
+                     (seq_length, batch_size, n_agents, n_entities)]
+                      for k, v in entity_sizes.items()},
                 # done
                 (seq_length, batch_size)
             )
@@ -67,9 +73,10 @@ class EgocentricHiveMind(nn.Module):
     def input_sizes(self):
         raise NotImplementedError
 
+    # Note that all entities are masked out since the masks are all 0s
     def zero_inputs(self, entity_sizes: Dict[str, int], seq_length: int = 1, batch_size: int = 1, n_agents: int = 1, n_entities: int = 1):
         sizes = list(self.input_sizes(entity_sizes, seq_length, batch_size, n_agents, n_entities))
-        return recursive_apply(lambda sz: torch.zeros(sz), sizes)
+        return recursive_apply(lambda size: torch.zeros(size), sizes)
 
     def zero_lstm_state(self, batch_size: int = 1, n_agents: int = 1):
         self.batch_size = batch_size
@@ -88,7 +95,12 @@ class EgocentricHiveMind(nn.Module):
     # input shapes:
     # - x_agent: (L, B, A, -1)
     # - x_lidar: (L, B, A, -1)
-    # - each element of x_entities: (L, B, A, n ents, -1)
+    # - x_entities: dict in the form (keys should match the keys given in __init__):
+    #   { 'type1':
+    #     ( entities tensor shape (L, B, A, n ents, -1),
+    #       mask tensor of shape (L, B, A, n ents) ),
+    #     [...]
+    #   }
     # - done: (L, B)
     # output shapes:
     # - all (L, B, A, action dim)
@@ -96,7 +108,9 @@ class EgocentricHiveMind(nn.Module):
     def forward(self, x_agent: torch.Tensor, x_lidar: torch.Tensor, x_entities: Dict[str, torch.Tensor], done: torch.Tensor, actions: Optional[List[torch.Tensor]] = None, deterministic: bool = False):
 
         [assert_dim(x, 4) for x in [x_agent, x_lidar] + ([actions] if actions is not None else [])]
-        recursive_apply(lambda x: assert_dim(x, 5), x_entities)
+        for x in x_entities.values():
+            assert_dim(x[0], 5)
+            assert_dim(x[1], 4)
         assert_dim(done, 2)
 
         # shape: (L, B, A, -)
@@ -117,9 +131,13 @@ class EgocentricHiveMind(nn.Module):
             # shape: (L, B, A, 1, -)
             F.relu(self.self_dense(torch.cat([x_self, x_self], axis=-1))).unsqueeze(-2)
         ]
+        mask_list = [
+            # shape: (L, B, A, 1)
+            torch.ones(x_self.size()[:3]).unsqueeze(-1)
+        ]
         for k in self.entity_keys:
             # shape: (L, B, A, -, -)
-            x = x_entities[k]
+            x = x_entities[k][0]
             z_entities_list.append(
                 F.relu(
                         self.entity_denses[k](
@@ -132,26 +150,45 @@ class EgocentricHiveMind(nn.Module):
                     )
                 )
             )
+            mask_list.append(x_entities[k][1])
         # shape: (L, B, A, -, -)
         z_entities = torch.cat(z_entities_list, axis=-2)
+        # shape: (L, B, A, -)
+        mask_vector = torch.cat(mask_list, axis=-1)
         
         # shape: (L*B*A, -, -)
         z_entities_flat = z_entities.flatten(end_dim=2)
+#         # mask order w.r.t. heads is taken from https://github.com/pytorch/pytorch/blob/c74c0c571880df886474be297c556562e95c00e0/test/test_nn.py#L5039
+#         # shape: (L*B*A*n_heads, -, -)
+#         attn_mask = torch.repeat_interleave(
+#             1 - torch.bmm(
+#                 # shape: (L*B*A, -, 1)
+#                 mask_vector.unsqueeze(-1).flatten(end_dim=2),
+#                 # shape: (L*B*A, 1, -)
+#                 mask_vector.unsqueeze(-2).flatten(end_dim=2)
+#             ),
+#         self.mh_attention.num_heads, dim=0).bool()
+        # shape: (L, B, A, -, -)
         residual_sa = z_entities + F.relu(
             self.sa_dense(
-                # shape: (L*B*A, -, -)
                 self.mh_attention(
-                    z_entities_flat, z_entities_flat, z_entities_flat
-                # shape: (L, B, A, -, -)
+                    z_entities_flat, z_entities_flat, z_entities_flat,
+                    # shape: (L, B, A, -)
+                    key_padding_mask=torch.logical_not(mask_vector).flatten(end_dim=2)
                 )[0].unflatten(0, [z_entities.size(0), z_entities.size(1), z_entities.size(2)])
             )
         )
+        
+        #TODO test that padded entities have no effect on the SA outputs (masked with the same mask)
 
         #TODO is this correct? seems so from the author's comments on openreview
         # "Avg pool" across entities: see https://openreview.net/forum?id=SkxpxJBKwS&noteId=BJxWUARNsr and https://openreview.net/forum?id=SkxpxJBKwS&noteId=ryeCRG40Or for details
-        #TODO use the mask
         # shape: (L, B, A, -)
-        z_pool = torch.mean(residual_sa, dim=-2)
+        z_pool = torch.mean(
+            residual_sa *
+            # shape: (L, B, A, -, 1)
+            mask_vector.unsqueeze(-1),
+        dim=-2)
         # shape: (L, B, A, -)
         z = F.relu(
             self.pool_dense(

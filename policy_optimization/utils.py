@@ -13,6 +13,10 @@ def callmethod(name):
     return call
 
 
+def ensure(cond):
+    assert cond
+
+
 def subdict(d, without=[]):
     return {k: d[k] for k in d.keys() if k not in without}
 
