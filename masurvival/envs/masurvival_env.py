@@ -131,14 +131,18 @@ class MaSurvivalEnv(gym.Env):
 
     @property
     def n_agents(self):
-        return self.config['agents']['n_spawns']
+        n = self.config['agents'].get('n_spawns', None)
+        if n is None:
+            return self.config['agents']['n_agents']
+        return n
 
     def __init__(
             self, config: Optional[Config] = None, omniscent: bool = False):
         self.omniscent = omniscent
         if config is not None:
             for k, subconfig in config.items():
-                config[k] |= subconfig
+                self.config[k] |= subconfig
+        self.observation_space = self._compute_obs_space()
         n_agents = self.config['agents']['n_agents']
         actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
         self.action_space = spaces.Tuple(actions_spaces)
@@ -211,6 +215,41 @@ class MaSurvivalEnv(gym.Env):
             'agents': sim.Group(agents_modules)
         }
         self.simulation = sim.Simulation(groups=groups)
+
+    def _compute_obs_space(self):
+        n_lasers = self.config['lidars']['n_lasers']
+        n_agents = self.config['agents']['n_agents']
+        n_boxes = self.config['boxes']['n_boxes']
+        n_heals = self.config['heals']['reset_spawns']['n_items']
+        n_walls = 4
+        agent_size = 1+3+3
+        item_size = 1+3
+        object_size = 1+2+3
+        inventory_item_size = 1
+        inventory_slots = self.config['inventory']['slots']
+        R = dict(low=float('-inf'), high=float('inf'))
+        B = dict(low=0., high=1.)
+        single_space = spaces.Tuple([
+            spaces.Box(**R, shape=(agent_size,)),
+            spaces.Box(**R, shape=(n_lasers,)),
+            spaces.Tuple([
+                spaces.Box(**R, shape=(n_agents-1, agent_size)),
+                spaces.Box(**B, shape=(n_agents-1,)),
+            ]),
+            spaces.Tuple([
+                spaces.Box(**R, shape=(inventory_slots, inventory_item_size)),
+                spaces.Box(**B, shape=(inventory_slots,))
+            ]),
+            spaces.Tuple([
+                spaces.Box(**R, shape=(n_heals+n_boxes, item_size)),
+                spaces.Box(**B, shape=(n_heals+n_boxes,))
+            ]),
+            spaces.Tuple([
+                spaces.Box(**R, shape=(n_boxes, object_size)),
+                spaces.Box(**B, shape=(n_boxes,))
+            ]),
+        ])
+        return spaces.Tuple([single_space]*self.n_agents)
 
     # if given, the seed takes precedence over the config seed
     def reset(self, seed: int = None, return_info: bool = False,
@@ -317,15 +356,15 @@ class MaSurvivalEnv(gym.Env):
                 seens[i].remove(agent_body)
         seens = list(reversed(seens))
         scans = list(reversed(lidars.scans))
-        obs_dead: AgentObservation = (
-            (0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, [], [], [], [])
-        obs = []
-        for body in bodies:
+        obs_dead = lambda i: (
+            (i,0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, [], [], [], [])
+        obss = []
+        for agent_id, body in enumerate(bodies):
             if body is None:
-                obs.append(obs_dead)
+                obss.append(obs_dead(agent_id))
                 continue
             self_: Vec = (
-                *body.position, body.angle, *body.linearVelocity, 
+                agent_id, *body.position, body.angle, *body.linearVelocity, 
                 body.angularVelocity)
             depths = [lidars.depth if scan is None else scan[1]
                       for scan in  scans.pop()]
@@ -345,8 +384,9 @@ class MaSurvivalEnv(gym.Env):
                 # Object types: 0 boxes, 1 walls
                 # Item types: 0 heals, 1 broken boxes
                 if group is self.simulation.groups['agents']:
+                    other_agent_id = [c == b for i, c in enumerate(bodies)][0]
                     qvel: Vec = (*b.linearVelocity, b.angularVelocity)
-                    others.append((*qpos, *qvel))
+                    others.append((other_agent_id, *qpos, *qvel))
                 elif group is self.simulation.groups['boxes']:
                     type_ = 0
                     assert isinstance(b.fixtures[0].shape, b2PolygonShape)
@@ -368,8 +408,23 @@ class MaSurvivalEnv(gym.Env):
                     objects.append((*qpos, float(type_), *size))
                 else:
                     assert False, 'How did we get here?'
-            obs.append((self_, depths, others, inventory, items, objects))
-        return tuple(obs)
+            obss.append((self_, depths, others, inventory, items, objects))
+
+        obss_np = _zero_element(self.observation_space)
+        for agent_id in range(self.n_agents):
+            obs_np = obss_np[agent_id]
+            obs = obss[agent_id]
+            for i in [0,1]:
+                obs_np[i] = np.array(obs[i], dtype=float)
+            for i in range(2, len(obs)):
+                if len(obs[i]) > 0:
+                    obs_np[i][0][:len(obs[i])] = np.array(obs[i], dtype=float)
+                    obs_np[i][1][:len(obs[i])] = 1
+                obs_np[i] = tuple(obs_np[i])
+            obss_np[agent_id] = tuple(obss_np[agent_id])
+        obss_np = tuple(obss_np)
+        #assert self.observation_space.contains(obss_np)
+        return obss_np
 
     def queue_actions(self, agents: sim.Group, all_actions: Action):
         d = [0., 1., -1.]
@@ -393,3 +448,14 @@ class MaSurvivalEnv(gym.Env):
         if not game.over:
             return tuple(0 for _ in bodies)
         return tuple(+1 if won else -1 for won in game.results)
+
+
+# only supports tuple and box spaces for now; returns lists instead of tuples to support mutability
+def _zero_element(space: gym.spaces.Space, dtype=float):
+    if isinstance(space, spaces.Tuple):
+        return [_zero_element(subspace) for subspace in space]
+    elif isinstance(space, spaces.Box):
+        return np.zeros(space.shape, dtype=dtype)
+    else:
+        assert False, f'Unsupported space of type {type(space)}'
+
