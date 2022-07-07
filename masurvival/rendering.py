@@ -368,6 +368,7 @@ class Lidars(View):
                 fixture, transform, self.fill, self.outline, self.layer)
 
 
+#TODO there maybe some bug with this that causes a segfault in pygame?
 # display inventories on the top left of the screen
 class Inventory(View):
     

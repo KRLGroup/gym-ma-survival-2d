@@ -139,10 +139,11 @@ class MaSurvivalEnv(gym.Env):
     def __init__(
             self, config: Optional[Config] = None, omniscent: bool = False):
         self.omniscent = omniscent
+        self.config = recursive_apply(lambda _: _, self.config)
         if config is not None:
             for k, subconfig in config.items():
                 self.config[k] |= subconfig
-        self.observation_space = self._compute_obs_space()
+        self.observation_space, self.observation_sizes = self._compute_obs_space()
         n_agents = self.config['agents']['n_agents']
         actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
         self.action_space = spaces.Tuple(actions_spaces)
@@ -170,15 +171,15 @@ class MaSurvivalEnv(gym.Env):
             sim.Cameras(**cameras_config),
             sim.Lidars(**lidar_config),
             sim.DynamicMotors(**motor_config),
-            Health(**health_config),
-            Melee(**melee_config),
             DeathDrop(**death_drop_config), # needs to be before inventory
             Inventory(**inventory_config),
+            Health(**health_config),
             AutoPickup(**auto_pickup_config),
             UseLast(),
             GiveLast(**give_config),
-            #SafeZone(**safe_zone_config),
+            SafeZone(**safe_zone_config),
             ImmunityPhase(**immunity_phase_config),
+            Melee(**melee_config), # needs to be after anything that kills bodies
             BattleRoyale()]
         boxes_config = self.config['boxes']
         boxes_item_config = self.config['boxes_item']
@@ -218,7 +219,7 @@ class MaSurvivalEnv(gym.Env):
 
     def _compute_obs_space(self):
         n_lasers = self.config['lidars']['n_lasers']
-        n_agents = self.config['agents']['n_agents']
+        n_agents = self.n_agents
         n_boxes = self.config['boxes']['n_boxes']
         n_heals = self.config['heals']['reset_spawns']['n_items']
         n_walls = 4
@@ -229,27 +230,29 @@ class MaSurvivalEnv(gym.Env):
         inventory_slots = self.config['inventory']['slots']
         R = dict(low=float('-inf'), high=float('inf'))
         B = dict(low=0., high=1.)
-        single_space = spaces.Tuple([
-            spaces.Box(**R, shape=(agent_size,)),
-            spaces.Box(**R, shape=(n_lasers,)),
+        space = spaces.Tuple([
+            spaces.Box(**R, shape=(n_agents, agent_size,)),
+            spaces.Box(**R, shape=(n_agents, n_lasers,)),
             spaces.Tuple([
-                spaces.Box(**R, shape=(n_agents-1, agent_size)),
-                spaces.Box(**B, shape=(n_agents-1,)),
-            ]),
-            spaces.Tuple([
-                spaces.Box(**R, shape=(inventory_slots, inventory_item_size)),
-                spaces.Box(**B, shape=(inventory_slots,))
-            ]),
-            spaces.Tuple([
-                spaces.Box(**R, shape=(n_heals+n_boxes, item_size)),
-                spaces.Box(**B, shape=(n_heals+n_boxes,))
-            ]),
-            spaces.Tuple([
-                spaces.Box(**R, shape=(n_boxes, object_size)),
-                spaces.Box(**B, shape=(n_boxes,))
-            ]),
+                spaces.Tuple([
+                    spaces.Box(**R, shape=(n_agents, n_agents-1, agent_size)),
+                    spaces.Box(**B, shape=(n_agents, n_agents-1,)),
+                ]),
+                spaces.Tuple([
+                    spaces.Box(**R, shape=(n_agents, inventory_slots, inventory_item_size)),
+                    spaces.Box(**B, shape=(n_agents, inventory_slots,))
+                ]),
+                spaces.Tuple([
+                    spaces.Box(**R, shape=(n_agents, n_heals+n_boxes, item_size)),
+                    spaces.Box(**B, shape=(n_agents, n_heals+n_boxes,))
+                ]),
+                spaces.Tuple([
+                    spaces.Box(**R, shape=(n_agents, n_walls+n_boxes, object_size)),
+                    spaces.Box(**B, shape=(n_agents, n_walls+n_boxes,))
+                ]),
+            ])
         ])
-        return spaces.Tuple([single_space]*self.n_agents)
+        return space, [agent_size, n_lasers, [agent_size, inventory_item_size, item_size, object_size]]
 
     # if given, the seed takes precedence over the config seed
     def reset(self, seed: int = None, return_info: bool = False,
@@ -305,8 +308,8 @@ class MaSurvivalEnv(gym.Env):
                         **rendering.health_view_config), # type: ignore
                     rendering.Melee(
                         **rendering.melee_view_config), # type: ignore
-                    rendering.Inventory(
-                        **rendering.inventory_view_config), # type: ignore
+                    #rendering.Inventory(
+                    #    **rendering.inventory_view_config), # type: ignore
                     #rendering.GiveLast(
                     #    **rendering.give_view_config), # type: ignore
                 ],
@@ -411,18 +414,16 @@ class MaSurvivalEnv(gym.Env):
             obss.append((self_, depths, others, inventory, items, objects))
 
         obss_np = _zero_element(self.observation_space)
-        for agent_id in range(self.n_agents):
-            obs_np = obss_np[agent_id]
-            obs = obss[agent_id]
-            for i in [0,1]:
-                obs_np[i] = np.array(obs[i], dtype=float)
-            for i in range(2, len(obs)):
-                if len(obs[i]) > 0:
-                    obs_np[i][0][:len(obs[i])] = np.array(obs[i], dtype=float)
-                    obs_np[i][1][:len(obs[i])] = 1
-                obs_np[i] = tuple(obs_np[i])
-            obss_np[agent_id] = tuple(obss_np[agent_id])
-        obss_np = tuple(obss_np)
+        #print(recursive_apply(lambda x: x.shape, obss_np))
+        #print(obss_np[2][0][0].shape)
+        for i in [0,1]:
+            obss_np[i] = np.array([obs[i] for obs in obss], dtype=np.float32)
+        for i in range(4):
+            #print(i)
+            for j, obs in enumerate(obss):
+                if len(obs[i+2]) > 0:
+                    obss_np[2][i][0][j,:len(obs[i+2])] = np.array(obs[i+2], dtype=np.float32)
+                    obss_np[2][i][1][j,:len(obs[i+2])] = 1
         #assert self.observation_space.contains(obss_np)
         return obss_np
 
@@ -451,11 +452,25 @@ class MaSurvivalEnv(gym.Env):
 
 
 # only supports tuple and box spaces for now; returns lists instead of tuples to support mutability
-def _zero_element(space: gym.spaces.Space, dtype=float):
+def _zero_element(space: gym.spaces.Space, dtype=np.float32):
     if isinstance(space, spaces.Tuple):
         return [_zero_element(subspace) for subspace in space]
     elif isinstance(space, spaces.Box):
         return np.zeros(space.shape, dtype=dtype)
     else:
         assert False, f'Unsupported space of type {type(space)}'
+
+
+#TODO import this from the policy opt utils
+# The "structure" of the arguments is taken from the 'struct_arg', which is the last by default.
+def recursive_apply(f: Callable, *args: Any, default: Optional[Any] = None, struct_arg: int = -1) -> Any:
+    if len(args) == 0:
+        return default
+    if isinstance(args[struct_arg], list):
+        return [recursive_apply(f, *arg) for arg in zip(*args)]
+    if isinstance(args[struct_arg], dict):
+        return {k: recursive_apply(f, *[arg[k] for arg in args])
+                for k in args[struct_arg].keys()}
+    else:
+        return f(*args)
 

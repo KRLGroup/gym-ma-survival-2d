@@ -60,8 +60,8 @@ def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
             frames.append(frame)
         #print(f'observation = {observation}')
         if done:
+            print(f'done after {i} steps')
             break
-            print('done')
             obs = env.reset()
     print(f'done')
     env.close()

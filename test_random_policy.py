@@ -29,8 +29,8 @@ def main(render_mode: Optional[str], gif_fpath: Optional[str] = None,
                 frames.append(frame)
         #print(f'observation = {observation}')
         if done:
+            print(f'done after {i} steps')
             break
-            print('done')
             obs = env.reset()
     end = time.time()
     print(f'avg step time: {(end - start)/1000.}')

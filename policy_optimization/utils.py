@@ -22,13 +22,19 @@ def subdict(d, without=[]):
 
 
 # The "structure" of the arguments is taken from the 'struct_arg', which is the last by default.
-def recursive_apply(f: Callable, *args: Any, default: Optional[Any] = None, struct_arg: int = -1) -> Any:
+def recursive_apply(f: Callable, *args: Any, default: Optional[Any] = None, struct_arg: int = -1, verbose: bool = False) -> Any:
     if len(args) == 0:
         return default
     if isinstance(args[struct_arg], list):
-        return [recursive_apply(f, *arg) for arg in zip(*args)]
+        if verbose:
+            print('list')
+        return [recursive_apply(f, *arg, verbose=verbose) for arg in zip(*args)]
     if isinstance(args[struct_arg], dict):
-        return {k: recursive_apply(f, *[arg[k] for arg in args])
+        if verbose:
+            print(f'dict({args[struct_arg].keys()})')
+        return {k: recursive_apply(f, *[arg[k] for arg in args], verbose=verbose)
                 for k in args[struct_arg].keys()}
     else:
+        if verbose:
+            print('apply')
         return f(*args)
