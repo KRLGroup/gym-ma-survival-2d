@@ -182,7 +182,8 @@ class MaPpoCentralized:
             old_approx_kl = (-logratio).mean()
             approx_kl = ((ratio - 1) - logratio).mean()
             clipfracs = ((ratio - 1.0).abs() > self.ppo_clipping).float().mean().item()
-            print(f'[DEBUG] KL ~= {old_approx_kl} ~= {approx_kl}; clipfracs = {clipfracs}')
+            if self.verbose:
+                print(f'[DEBUG] KL ~= {old_approx_kl} ~= {approx_kl}; clipfracs = {clipfracs}')
 
         newvalue = self.critic(*mb_observations, mb_dones)
         if debug_first_step:

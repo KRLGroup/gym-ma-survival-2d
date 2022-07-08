@@ -48,6 +48,7 @@ def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
         frames.append(frame)
     done = False
     pressed = pygame.key.get_pressed()
+    rewards = []
     for i in range(1000):
         actions = env.action_space.sample()
         user_action, pressed = get_action_from_keyboard(pressed)
@@ -59,12 +60,14 @@ def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
         if gif_fpath is not None and (i+1) % record_interval == 0:
             frames.append(frame)
         #print(f'observation = {observation}')
+        rewards.append(reward)
         if done:
             print(f'done after {i} steps')
             break
             obs = env.reset()
-    print(f'done')
     env.close()
+    rewards = np.array(rewards)
+    print(f'R = {rewards.sum(axis=0)}, r ~ {rewards.mean(axis=0)} +- {rewards.std(axis=0)}')
     if gif_fpath is not None:
         import imageio
         from pygifsicle import optimize # type: ignore

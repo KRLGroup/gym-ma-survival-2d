@@ -1,3 +1,4 @@
+import math
 from typing import (
     Any, Type, Union, Optional, Tuple, List, Dict, Set, NamedTuple)
 from operator import attrgetter
@@ -198,7 +199,7 @@ class Inventory(sim.Module):
         for body in bodies:
             del self.inventories[body]
 
-# makes bodies pickup items in bounding box centered on them, putting them in 
+# makes bodies pickup items in a shape centered on them, putting them in 
 # the first inventory module it finds in the group
 class AutoPickup(sim.Module):
     
@@ -254,9 +255,9 @@ class GiveLast(sim.Module):
 
     def post_reset(self, group: sim.Group):
         self.give = []
-        self._update_takers(group)
 
     def pre_step(self, group: sim.Group):
+        self._update_takers(group)
         missing = len(group.bodies) - len(self.give)
         if missing > 0:
             self.give += [False]*missing
@@ -266,9 +267,6 @@ class GiveLast(sim.Module):
                 [inventory.give(giver, taker) for inventory in inventories]
         if not self.drift:
             self.give = []
-
-    def post_step(self, group: sim.Group):
-        self._update_takers(group)
 
     def _update_takers(self, group: sim.Group):
         shape = self.shape
@@ -377,6 +375,13 @@ class Melee(sim.Module):
         self.drift = drift
 
     def pre_step(self, group: sim.Group):
+        self.origins = [body.position for body in group.bodies]
+        hands = [sim.from_polar(length=self.range, angle=body.angle)
+                 for body in group.bodies]
+        self.endpoints = [a + d for a, d in zip(self.origins, hands)]
+        scans = [sim.laser_scan(group.world, a, b)
+                 for a, b in zip(self.origins, self.endpoints)]
+        self.targets = [scan and scan[0].body for scan in scans]
         missing = len(group.bodies) - len(self.attacks)
         if missing > 0:
             self.attacks += [False]*missing
@@ -386,15 +391,6 @@ class Melee(sim.Module):
                 self._attack(target, self.damage)
         if not self.drift:
             self.attacks = []
-
-    def post_step(self, group: sim.Group):
-        self.origins = [body.position for body in group.bodies]
-        hands = [sim.from_polar(length=self.range, angle=body.angle)
-                 for body in group.bodies]
-        self.endpoints = [a + d for a, d in zip(self.origins, hands)]
-        scans = [sim.laser_scan(group.world, a, b)
-                 for a, b in zip(self.origins, self.endpoints)]
-        self.targets = [scan and scan[0].body for scan in scans]
 
     def _attack(self, target: b2Body, damage: int):
         healths = sim.Group.body_group(target).get(Health)
@@ -493,6 +489,10 @@ class SafeZone(sim.Module):
         self.radiuses.append(0)
         self.centers = [b2Vec2(c) for c in centers]
         self.centers.append(b2Vec2(0,0))
+
+    # compute the maximum number of steps an agent can survive, provided it always stays inside the safe zone, and also considering the steps it can survive after the zone becomes void
+    def max_lifespan(self, max_health: int):
+        return (self.phases-1)*2*self.cooldown + math.ceil(max_health/self.damage)
 
     def post_reset(self, group: sim.Group):
         self.t_cooldown = self.cooldown

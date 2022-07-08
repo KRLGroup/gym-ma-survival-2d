@@ -37,7 +37,7 @@ def test_ma_episode(env, actor, render=False):
 
 n_envs = 4
 #envs = EnvBatch(repeat(lambda: MaEnv(repeat(gym.make, n_agents, "CartPole-v1")), n_envs))
-envs = EnvBatch(repeat(MaSurvivalEnv, n_envs))
+envs = EnvBatch(repeat(MaSurvivalEnv, n_envs), verbose=False)
 n_agents = envs.envs[0].n_agents
 # n_observations=envs.envs[0].n_observations
 # n_actions=envs.envs[0].n_actions
@@ -75,12 +75,14 @@ ppo = MaPpoCentralized(
     minibatch_size=128,
     gamma=0.99, # h&s use 0.998
     gae_lambda=0.95, # h&s use 0.95
+    verbose=True
 )
 
 #test_env = MaEnv(repeat(gym.make, n_agents, "CartPole-v1"))
 test_env = MaSurvivalEnv()
 
 for i in range(10):
-    ppo.train(1)
+    ppo.train(10)
+    print(f'Trained 10 times')
     rewards = test_ma_episode(test_env, actor, render=True)
     print(f'R = {rewards.sum(axis=0)}, r = {rewards.mean(axis=0)} +- {rewards.std(axis=0)}')

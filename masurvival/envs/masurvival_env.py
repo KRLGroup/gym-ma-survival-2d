@@ -127,6 +127,7 @@ class MaSurvivalEnv(gym.Env):
     canvas: Optional[Any] = None
     # internal state
     simulation: sim.Simulation
+    steps: int
     spawner: SpawnGrid
 
     @property
@@ -166,7 +167,7 @@ class MaSurvivalEnv(gym.Env):
         self.spawner = SpawnGrid(**spawn_grid_config)
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
-            sim.LogDeaths(), # this must come before IndexBodies to work
+            #sim.LogDeaths(), # this must come before IndexBodies to work
             sim.IndexBodies(),
             sim.Cameras(**cameras_config),
             sim.Lidars(**lidar_config),
@@ -178,7 +179,7 @@ class MaSurvivalEnv(gym.Env):
             UseLast(),
             GiveLast(**give_config),
             SafeZone(**safe_zone_config),
-            ImmunityPhase(**immunity_phase_config),
+            #ImmunityPhase(**immunity_phase_config),
             Melee(**melee_config), # needs to be after anything that kills bodies
             BattleRoyale()]
         boxes_config = self.config['boxes']
@@ -269,6 +270,7 @@ class MaSurvivalEnv(gym.Env):
         self.simulation.groups['agents'].get(DeathDrop)[0].rng = self.rng
         obs = self.fetch_observations(self.simulation.groups['agents'])
         info: Dict = {}
+        self.steps = 0
         return (obs, info) if return_info else obs # type: ignore
 
     def step(self, # type: ignore
@@ -281,6 +283,7 @@ class MaSurvivalEnv(gym.Env):
         reward = self.compute_rewards(agents, **self.config['reward_scheme'])
         done = agents.get(BattleRoyale)[0].over
         info: Dict = {}
+        self.steps += 1
         return obs, reward, done, info # type: ignore
 
     # Ignores the render mode after the first call. TODO change that
@@ -414,12 +417,9 @@ class MaSurvivalEnv(gym.Env):
             obss.append((self_, depths, others, inventory, items, objects))
 
         obss_np = _zero_element(self.observation_space)
-        #print(recursive_apply(lambda x: x.shape, obss_np))
-        #print(obss_np[2][0][0].shape)
         for i in [0,1]:
             obss_np[i] = np.array([obs[i] for obs in obss], dtype=np.float32)
         for i in range(4):
-            #print(i)
             for j, obs in enumerate(obss):
                 if len(obs[i+2]) > 0:
                     obss_np[2][i][0][j,:len(obs[i+2])] = np.array(obs[i+2], dtype=np.float32)
@@ -443,12 +443,20 @@ class MaSurvivalEnv(gym.Env):
     def compute_rewards(
             self, agents: sim.Group, sparse: bool) -> Tuple[float, ...]:
         bodies = agents.get(sim.IndexBodies)[0].bodies
+        rewards = np.zeros(self.n_agents, dtype=np.float32)
         if not sparse:
-            return tuple(-1 if body is None else +1 for body in bodies)
+            rewards += np.array([-1 if body is None else +1 for body in bodies])
         game = agents.get(BattleRoyale)[0]
-        if not game.over:
-            return tuple(0 for _ in bodies)
-        return tuple(+1 if won else -1 for won in game.results)
+        if game.over:
+            agent_health = self.config['health']['health']
+            n_heals = self.config['heals']['reset_spawns']['n_spawns']
+            healing = self.config['heals']['heal']['healing']
+            print(agent_health, n_heals, healing)
+            max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
+            print(f'max prize was {max_prize}')
+            prize = max_prize - self.steps
+            rewards += np.array([prize if won else -prize for won in game.results])
+        return rewards
 
 
 # only supports tuple and box spaces for now; returns lists instead of tuples to support mutability
