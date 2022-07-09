@@ -43,7 +43,7 @@ default_config: Config = {
         'cooldown': 300,
     },
     'agents': {
-        'n_agents': 4,
+        'n_agents': 2,
         'agent_size': 1,
     },
     'cameras': {
@@ -56,7 +56,7 @@ default_config: Config = {
         'depth': 2,
     },
     'motors': {
-        'impulse': (0.5, 0.5, 0.025),
+        'impulse': (0.25, 0.25, 0.0125),
         'drift': False,
     },
     'health': {
@@ -451,9 +451,7 @@ class MaSurvivalEnv(gym.Env):
             agent_health = self.config['health']['health']
             n_heals = self.config['heals']['reset_spawns']['n_spawns']
             healing = self.config['heals']['heal']['healing']
-            print(agent_health, n_heals, healing)
             max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
-            print(f'max prize was {max_prize}')
             prize = max_prize - self.steps
             rewards += np.array([prize if won else -prize for won in game.results])
         return rewards

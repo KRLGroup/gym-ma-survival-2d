@@ -6,6 +6,7 @@ import gym
 import torch
 import torch.nn as nn
 import torch.optim
+from torch.utils.tensorboard import SummaryWriter
 
 from policy_optimization.batch_buffer import BatchBuffer
 from policy_optimization.gae import general_advantage_estimation
@@ -95,6 +96,8 @@ class MaPpoCentralized:
         self.lstm_buffers = {k: repeat(BatchBuffer, 2, (1, chunks_per_gae_horizon, n_envs, n_agents, getattr(self, k).lstm.hidden_size), batch_axis=1) for k in self.lstm_keys}
         self.last_lstm_states = {k: getattr(self, k).zero_lstm_state(batch_size=n_envs, n_agents=n_agents) for k in self.lstm_keys}
         self.optimizer = torch.optim.Adam(list(self.actor.parameters()) + list(self.critic.parameters()), lr=learning_rate, eps=1e-5)
+        self.sgd_steps = 0
+        self.writer = SummaryWriter()
 
     def train(self, steps: int):
         for step in range(steps):
@@ -149,6 +152,9 @@ class MaPpoCentralized:
         #TODO normalizations
         for epoch in range(self.epochs_per_step):
             for i, minibatch_id in enumerate(torch.randperm(self.minibatches_per_buffer, generator=self.rng)):
+                self.sgd_steps += 1
+                if self.verbose:
+                    print(f'Performing SGD step {self.sgd_steps}')
                 self.minibatch_step(minibatch_id, debug_first_step=(i == 0 and epoch == 0))
         recursive_apply(lambda b: b.flush() if isinstance(b, BatchBuffer) else None, self.buffers)
 
@@ -164,7 +170,7 @@ class MaPpoCentralized:
         mb_dones = self.buffers['dones'].buffer[:,a:b,...]
 
         #TODO why sometimes logprobs and values at epoch 0 step 0 or not the same (but very close) w.r.t. the buffer? float precision?
-        
+
         _, newlogprob, entropy = self.actor(*mb_observations, mb_dones, actions=self.buffers['actions'].buffer[:,a:b,...])
         logratio = newlogprob - self.buffers['logprobs'].buffer[:,a:b,...]
         if debug_first_step:
@@ -182,8 +188,8 @@ class MaPpoCentralized:
             old_approx_kl = (-logratio).mean()
             approx_kl = ((ratio - 1) - logratio).mean()
             clipfracs = ((ratio - 1.0).abs() > self.ppo_clipping).float().mean().item()
-            if self.verbose:
-                print(f'[DEBUG] KL ~= {old_approx_kl} ~= {approx_kl}; clipfracs = {clipfracs}')
+            #if self.verbose:
+            #    print(f'[DEBUG] KL ~= {old_approx_kl} ~= {approx_kl}; clipfracs = {clipfracs}')
 
         newvalue = self.critic(*mb_observations, mb_dones)
         if debug_first_step:
@@ -194,10 +200,19 @@ class MaPpoCentralized:
 
         loss = pg_loss - self.loss_coefficients['entropy'] * entropy_loss + v_loss * self.loss_coefficients['value']
 
+        self.writer.add_scalar('loss/ppo', loss.item(), self.sgd_steps)
+        self.writer.add_scalar('loss/pg', pg_loss.item(), self.sgd_steps)
+        self.writer.add_scalar('loss/entropy', entropy_loss.item(), self.sgd_steps)
+        self.writer.add_scalar('loss/value', v_loss.item(), self.sgd_steps)
+        self.writer.add_scalar('debug/kl1', old_approx_kl.item(), self.sgd_steps)
+        self.writer.add_scalar('debug/kl2', approx_kl.item(), self.sgd_steps)
+        self.writer.add_scalar('debug/clipfrac', clipfracs, self.sgd_steps)
+
         loss.backward()
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.optimizer.step()
+
 
     def save_last_lstm_states(self):
         for k in self.lstm_keys:
