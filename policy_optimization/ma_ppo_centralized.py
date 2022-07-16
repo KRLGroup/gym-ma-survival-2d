@@ -121,8 +121,10 @@ class MaPpoCentralized:
                 recursive_apply(lambda buf, batch: buf.append(batch.unsqueeze(1)), self.lstm_buffers, {k: getattr(self, k).get_lstm_state() for k in self.lstm_keys})
             with torch.no_grad():
                 # shape: (1, E, A)
+                #gae_batch['values'] = self.critic(observations[0], dones)
                 gae_batch['values'] = self.critic(*observations, dones)
                 # shapes: all (1, E, A)
+                #gae_batch['actions'], gae_batch['logprobs'], gae_batch['entropies'] = self.actor(observations[0], dones)
                 gae_batch['actions'], gae_batch['logprobs'], gae_batch['entropies'] = self.actor(*observations, dones)
             self.envs.step(gae_batch['actions'].squeeze(0))
             # shape: (1, E, A)
@@ -133,6 +135,7 @@ class MaPpoCentralized:
                 dones_next = self.envs.dones.unsqueeze(0)
                 with torch.no_grad():
                     # shape: (1, E, A)
+                    #values_next = self.critic(recursive_apply(lambda x: torch.as_tensor(x).unsqueeze(0), self.envs.observations)[0], dones_next)
                     values_next = self.critic(*recursive_apply(lambda x: torch.as_tensor(x).unsqueeze(0), self.envs.observations), dones_next)
                 # shapes: all (1, E, A)
                 self.gae_buffers['advantages'], self.gae_buffers['returns'] = general_advantage_estimation(self.gae_buffers['rewards'].buffer, self.gae_buffers['values'].buffer, self.gae_buffers['dones'].buffer.unsqueeze(-1), values_next, dones_next.unsqueeze(-1), **self.gae_params)
@@ -171,12 +174,14 @@ class MaPpoCentralized:
 
         #TODO why sometimes logprobs and values at epoch 0 step 0 or not the same (but very close) w.r.t. the buffer? float precision?
 
+        #_, newlogprob, entropy = self.actor(mb_observations[0], mb_dones, actions=self.buffers['actions'].buffer[:,a:b,...])
         _, newlogprob, entropy = self.actor(*mb_observations, mb_dones, actions=self.buffers['actions'].buffer[:,a:b,...])
         logratio = newlogprob - self.buffers['logprobs'].buffer[:,a:b,...]
         if debug_first_step:
-            ok = torch.allclose(logratio, torch.tensor(0.))
-            if not ok and logratio.mean() + logratio.std() > 1e-7:
-                print(f'wrong logratio: {logratio.mean()} +- {logratio.std()}')
+            with torch.no_grad():
+                ok = torch.allclose(logratio, torch.tensor(0.))
+                if not ok and logratio.mean() + logratio.std() > 1e-7:
+                    print(f'wrong logratio: {logratio.mean()} +- {logratio.std()}')
         ratio = logratio.exp()
         mb_advantages = self.buffers['advantages'].buffer[:,a:b,...]
         pg_loss1 = -mb_advantages * ratio
@@ -191,11 +196,13 @@ class MaPpoCentralized:
             #if self.verbose:
             #    print(f'[DEBUG] KL ~= {old_approx_kl} ~= {approx_kl}; clipfracs = {clipfracs}')
 
+        #newvalue = self.critic(mb_observations[0], mb_dones)
         newvalue = self.critic(*mb_observations, mb_dones)
         if debug_first_step:
-            ok = torch.allclose(newvalue, self.buffers['values'].buffer[:,a:b,...])
-            if not ok:
-                print(f'wrong vals, delta = {newvalue - self.buffers["values"].buffer[:,a:b,...]}, oldvals: {self.buffers["values"].buffer[:,a:b,...]}, newvals: {newvalue}')
+            with torch.no_grad():
+                ok = torch.allclose(newvalue, self.buffers['values'].buffer[:,a:b,...])
+                if not ok:
+                    print(f'wrong vals, delta = {newvalue - self.buffers["values"].buffer[:,a:b,...]}, oldvals: {self.buffers["values"].buffer[:,a:b,...]}, newvals: {newvalue}')
         v_loss = 0.5 * ((newvalue - self.buffers['returns'].buffer[:,a:b,...]) ** 2).mean()
 
         loss = pg_loss - self.loss_coefficients['entropy'] * entropy_loss + v_loss * self.loss_coefficients['value']

@@ -37,7 +37,7 @@ class EgocentricHiveMind(nn.Module):
     #TODO initialize layers like in h&s
     #TODO add layer norms
 
-    def __init__(self, action_space: Tuple[int, ...], x_agent_size: int, x_lidar_size: int, entity_types: int, lidar_conv_features: int = 9, lidar_conv_kernel_size: int = 3, entity_features: int = 64, attention_heads: int = 4, attention_head_size: int = 16, lstm_input_features: int = 128, lstm_size: int = 128):
+    def __init__(self, action_space: Tuple[int, ...], x_agent_size: int, x_lidar_size: int, x_safe_zone_size: int,  entity_types: int, lidar_conv_features: int = 9, lidar_conv_kernel_size: int = 3, entity_features: int = 64, attention_heads: int = 4, attention_head_size: int = 16, lstm_input_features: int = 128, lstm_size: int = 128):
         super().__init__()
         assert entity_features % 2 == 0
         self.entity_types = entity_types
@@ -47,6 +47,8 @@ class EgocentricHiveMind(nn.Module):
                 (seq_length, batch_size, n_agents, x_agent_size),
                 # lidar
                 (seq_length, batch_size, n_agents, x_lidar_size),
+                # safe zone
+                (seq_length, batch_size, n_agents, x_safe_zone_size),
                 # entities
                 {k: [(seq_length, batch_size, n_agents, n_entities, n),
                      (seq_length, batch_size, n_agents, n_entities)]
@@ -95,6 +97,7 @@ class EgocentricHiveMind(nn.Module):
     # input shapes:
     # - x_agent: (L, B, A, -1)
     # - x_lidar: (L, B, A, -1)
+    # - x_safe_zone: (L, B, A, -1)
     # - x_entities: list in the form (len should match entity_types given in __init__)
     #   [
     #     ( entities tensor shape (L, B, A, n ents, -1),
@@ -107,7 +110,7 @@ class EgocentricHiveMind(nn.Module):
     # - logprobs: (L, B, A)
     # - entropies: (L, B, A)
     #TODO support masking entities (e.g. because of padded entities in batches)
-    def forward(self, x_agent: torch.Tensor, x_lidar: torch.Tensor, x_entities: List, done: torch.Tensor, actions: Optional[List[torch.Tensor]] = None, deterministic: bool = False):
+    def forward(self, x_agent: torch.Tensor, x_lidar: torch.Tensor, x_safe_zone: torch.Tensor, x_entities: List, done: torch.Tensor, actions: Optional[List[torch.Tensor]] = None, deterministic: bool = False):
 
         [assert_dim(x, 4) for x in [x_agent, x_lidar] + ([actions] if actions is not None else [])]
         for x in x_entities:
@@ -127,7 +130,7 @@ class EgocentricHiveMind(nn.Module):
             start_dim=-2
         )
         # shape: (L, B, A, -)
-        x_self = torch.cat([x_agent, z_lidar], axis=-1)
+        x_self = torch.cat([x_agent, z_lidar, x_safe_zone], axis=-1)
         #TODO is the agent itself counted as an entity? the openreview comments seem to implicate both options (inclusion is also suggested by the figure in the paper, although not from its appendix B)
         z_entities_list = [
             # shape: (L, B, A, 1, -)
@@ -235,7 +238,7 @@ class EgocentricHiveMindCritic(nn.Module):
     #TODO initialize layers like in h&s
     #TODO add layer norms
 
-    def __init__(self, x_agent_size: int, x_lidar_size: int, entity_types: int, lidar_conv_features: int = 9, lidar_conv_kernel_size: int = 3, entity_features: int = 64, attention_heads: int = 4, attention_head_size: int = 16, lstm_input_features: int = 128, lstm_size: int = 128):
+    def __init__(self, x_agent_size: int, x_lidar_size: int, x_safe_zone_size: int, entity_types: int, lidar_conv_features: int = 9, lidar_conv_kernel_size: int = 3, entity_features: int = 64, attention_heads: int = 4, attention_head_size: int = 16, lstm_input_features: int = 128, lstm_size: int = 128):
         super().__init__()
         assert entity_features % 2 == 0
         self.entity_types = entity_types
@@ -245,6 +248,8 @@ class EgocentricHiveMindCritic(nn.Module):
                 (seq_length, batch_size, n_agents, x_agent_size),
                 # lidar
                 (seq_length, batch_size, n_agents, x_lidar_size),
+                # safe zone
+                (seq_length, batch_size, n_agents, x_safe_zone_size),
                 # entities
                 {k: [(seq_length, batch_size, n_agents, n_entities, n),
                      (seq_length, batch_size, n_agents, n_entities)]
@@ -293,6 +298,7 @@ class EgocentricHiveMindCritic(nn.Module):
     # input shapes:
     # - x_agent: (L, B, A, -1)
     # - x_lidar: (L, B, A, -1)
+    # - x_safe_zone: (L, B, A, -1)
     # - x_entities: list in the form (len should match entity_types given in __init__)
     #   [
     #     ( entities tensor shape (L, B, A, n ents, -1),
@@ -303,7 +309,7 @@ class EgocentricHiveMindCritic(nn.Module):
     # output shapes:
     # - all (L, B, A, action dim)
     #TODO support masking entities (e.g. because of padded entities in batches)
-    def forward(self, x_agent: torch.Tensor, x_lidar: torch.Tensor, x_entities: List, done: torch.Tensor, actions: Optional[List[torch.Tensor]] = None, deterministic: bool = False):
+    def forward(self, x_agent: torch.Tensor, x_lidar: torch.Tensor, x_safe_zone: torch.Tensor, x_entities: List, done: torch.Tensor, actions: Optional[List[torch.Tensor]] = None, deterministic: bool = False):
 
         [assert_dim(x, 4) for x in [x_agent, x_lidar] + ([actions] if actions is not None else [])]
         for x in x_entities:
@@ -323,7 +329,7 @@ class EgocentricHiveMindCritic(nn.Module):
             start_dim=-2
         )
         # shape: (L, B, A, -)
-        x_self = torch.cat([x_agent, z_lidar], axis=-1)
+        x_self = torch.cat([x_agent, z_lidar, x_safe_zone], axis=-1)
         #TODO is the agent itself counted as an entity? the openreview comments seem to implicate both options (inclusion is also suggested by the figure in the paper, although not from its appendix B)
         z_entities_list = [
             # shape: (L, B, A, 1, -)
@@ -422,7 +428,7 @@ class SimpleLstmHiveMind(nn.Module):
     #TODO annotate attrs
 
     # n_observations is the size of the obs for a single agent
-    def __init__(self, n_observations: int, n_actions: int):
+    def __init__(self, n_observations: int, action_shape: int):
         super().__init__()
         self.network = nn.Sequential(
             layer_init(nn.Linear(n_observations, 128)),
@@ -437,7 +443,7 @@ class SimpleLstmHiveMind(nn.Module):
                 nn.init.constant_(param, 0)
             elif "weight" in name:
                 nn.init.orthogonal_(param, 1.0)
-        self.logits = layer_init(nn.Linear(32, n_actions), std=0.01)
+        self.heads = nn.ModuleList([layer_init(nn.Linear(32, n_actions), std=0.01) for n_actions in action_shape])
 
     def zero_lstm_state(self, batch_size: int, n_agents: int) -> List[torch.Tensor]:
         return repeat(torch.zeros, 2, 1, batch_size, n_agents, self.lstm.hidden_size)
@@ -455,17 +461,17 @@ class SimpleLstmHiveMind(nn.Module):
     # - done: (L, B)
     # - action: (L, B, A)
     # - lstm state(s) should be set with set_lstm_state
-    # outputs have same shape as action (as if it was given)
+    # outputs have same shape as in 'EgocentricHiveMind.forward'
     # where:
     # - L := time steps
     # - B := batch size
     # - A := number of agents
     # - X := shape/size of a single agent's observation
     # - S := hidden size of the lstm
-    def forward(self, x: torch.Tensor, done: torch.Tensor, action: Optional[torch.Tensor] = None, deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        assert torch.all(self.batch_size == torch.tensor([x.size(1), done.size(1)]))
-        if action is not None:
-            assert action.size(1) == self.batch_size
+    def forward(self, x: torch.Tensor, done: torch.Tensor, actions: Optional[torch.Tensor] = None, deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        #assert torch.all(self.batch_size == torch.tensor([x.size(1), done.size(1)]))
+        #if action is not None:
+        #    assert action.size(1) == self.batch_size
         # shape: (L, B, A, ...)
         z_network = self.network(x)
         #TODO test if this can directly be allocated as tensor of appropriate shape
@@ -487,13 +493,19 @@ class SimpleLstmHiveMind(nn.Module):
         self.lstm_state = list(self.lstm_state)
         # (L, B, A, ...)
         z_lstm = torch.cat(zs_lstm, dim=0)
-        logits = self.logits(z_lstm)
-        distr = Categorical(logits=logits)
-        if action is None:
-            action = distr.mode if deterministic else distr.sample()
-        logprob = distr.log_prob(action)
-        entropy = distr.entropy()
-        return action, logprob, entropy
+        # each head outputs (L, B, A, n actions)
+        # each distr has samples of shape (L, B, A)
+        distrs = [Categorical(logits=head(z_lstm)) for head in self.heads]
+        if actions is None:
+            if deterministic:
+                actions = torch.cat([distr.mode.unsqueeze(-1) for distr in distrs], axis=-1)
+            else:
+                actions = torch.cat([distr.sample().unsqueeze(-1) for distr in distrs], axis=-1)
+        #TODO collapse entropies for a vector action into a single value?
+        entropies = torch.cat([distr.entropy().unsqueeze(-1) for distr in distrs], axis=-1)
+        logprobs = torch.cat([distrs[i].log_prob(actions.select(-1, i)).unsqueeze(-1) for i in range(len(distrs))], axis=-1).prod(dim=-1)
+        return actions, logprobs, entropies
+
 
 # same as single-agent, but assumes the first dimension of the observation shape indexes over agents, and is treated as if it was a batch size (i.e. the size of the model is independent of it); can be used for MA envs as a shared policy (inserting agent-specific info into the observations is up to the user)
 class SimpleLstmHiveMindCritic(nn.Module):
@@ -544,9 +556,9 @@ class SimpleLstmHiveMindCritic(nn.Module):
     # - X := shape/size of a single agent's observation
     # - S := hidden size of the lstm
     def forward(self, x: torch.Tensor, done: torch.Tensor, action: Optional[torch.Tensor] = None, deterministic: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        assert torch.all(self.batch_size == torch.tensor([x.size(1), done.size(1)]))
-        if action is not None:
-            assert action.size(1) == self.batch_size
+        #assert torch.all(self.batch_size == torch.tensor([x.size(1), done.size(1)]))
+        #if action is not None:
+        #    assert action.size(1) == self.batch_size
         # shape: (L, B, A, ...)
         z_network = self.network(x)
         #TODO test if this can directly be allocated as tensor of appropriate shape

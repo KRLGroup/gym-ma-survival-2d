@@ -52,7 +52,10 @@ def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
     for i in range(1000):
         actions = env.action_space.sample()
         user_action, pressed = get_action_from_keyboard(pressed)
-        actions = (user_action,) + ([0,0,0,0,0,0],) + actions[2:]
+        if env.n_agents >= 2:
+            actions = (user_action,) + ([0,0,0,0,0,0],) + actions[2:]
+        elif env.n_agents == 1:
+            actions = (user_action,)
         action = actions
         #print(f'action: {action}')
         observation, reward, done, info = env.step(action)

@@ -43,7 +43,7 @@ default_config: Config = {
         'cooldown': 300,
     },
     'agents': {
-        'n_agents': 2,
+        'n_agents': 1,
         'agent_size': 1,
     },
     'cameras': {
@@ -68,7 +68,7 @@ default_config: Config = {
         'drift': True, # so that we can actually render actions
     },
     'boxes': {
-        'n_boxes': 2,
+        'n_boxes': 0,
         'box_size': 1,
     },
     'boxes_item': {
@@ -80,7 +80,7 @@ default_config: Config = {
     },
     'heals': {
         'reset_spawns': {
-            'n_items': 3,
+            'n_items': 0,
             'item_size': 0.5,
         },
         'heal': {
@@ -181,7 +181,8 @@ class MaSurvivalEnv(gym.Env):
             SafeZone(**safe_zone_config),
             #ImmunityPhase(**immunity_phase_config),
             Melee(**melee_config), # needs to be after anything that kills bodies
-            BattleRoyale()]
+            #BattleRoyale(),
+            ]
         boxes_config = self.config['boxes']
         boxes_item_config = self.config['boxes_item']
         boxes_health_config = self.config['boxes_health']
@@ -224,7 +225,8 @@ class MaSurvivalEnv(gym.Env):
         n_boxes = self.config['boxes']['n_boxes']
         n_heals = self.config['heals']['reset_spawns']['n_items']
         n_walls = 4
-        agent_size = 1+3+3
+        agent_size = 1+1+3+3
+        safe_zone_size = 3
         item_size = 1+3
         object_size = 1+2+3
         inventory_item_size = 1
@@ -234,6 +236,7 @@ class MaSurvivalEnv(gym.Env):
         space = spaces.Tuple([
             spaces.Box(**R, shape=(n_agents, agent_size,)),
             spaces.Box(**R, shape=(n_agents, n_lasers,)),
+            spaces.Box(**R, shape=(n_agents, safe_zone_size)),
             spaces.Tuple([
                 spaces.Tuple([
                     spaces.Box(**R, shape=(n_agents, n_agents-1, agent_size)),
@@ -253,21 +256,20 @@ class MaSurvivalEnv(gym.Env):
                 ]),
             ])
         ])
-        return space, [agent_size, n_lasers, [agent_size, inventory_item_size, item_size, object_size]]
+        return space, [agent_size, n_lasers, safe_zone_size, [agent_size, inventory_item_size, item_size, object_size]]
 
     # if given, the seed takes precedence over the config seed
     def reset(self, seed: int = None, return_info: bool = False,
               options: Optional[Dict[Any, Any]] = None) \
             -> Union[Observation,
                      Tuple[Observation, Dict[Any, Any]]]:
-        if seed is None and 'seed' in self.config['rng']:
-            seed = self.config['rng']['seed']
+        #if seed is None and 'seed' in self.config['rng']:
+        #    seed = self.config['rng']['seed']
         super().reset(seed=seed)
-        self.rng = np.random.default_rng(seed=seed)
-        self.spawner.rng = self.rng
+        self.spawner.rng = self.np_random
         self.spawner.reset()
         self.simulation.reset()
-        self.simulation.groups['agents'].get(DeathDrop)[0].rng = self.rng
+        self.simulation.groups['agents'].get(DeathDrop)[0].rng = self.np_random
         obs = self.fetch_observations(self.simulation.groups['agents'])
         info: Dict = {}
         self.steps = 0
@@ -281,7 +283,8 @@ class MaSurvivalEnv(gym.Env):
         self.simulation.step()
         obs = self.fetch_observations(agents)
         reward = self.compute_rewards(agents, **self.config['reward_scheme'])
-        done = agents.get(BattleRoyale)[0].over
+        #done = agents.get(BattleRoyale)[0].over
+        done = all([b is None for b in agents.get(sim.IndexBodies)[0].bodies])
         info: Dict = {}
         self.steps += 1
         return obs, reward, done, info # type: ignore
@@ -309,8 +312,8 @@ class MaSurvivalEnv(gym.Env):
                         **rendering.cameras_view_config), # type: ignore
                     rendering.Health(
                         **rendering.health_view_config), # type: ignore
-                    rendering.Melee(
-                        **rendering.melee_view_config), # type: ignore
+                    #rendering.Melee(
+                    #    **rendering.melee_view_config), # type: ignore
                     #rendering.Inventory(
                     #    **rendering.inventory_view_config), # type: ignore
                     #rendering.GiveLast(
@@ -349,6 +352,8 @@ class MaSurvivalEnv(gym.Env):
         bodies = agents.get(sim.IndexBodies)[0].bodies
         lidars = agents.get(sim.Lidars)[0]
         inventories = agents.get(Inventory)[0]
+        health = agents.get(Health)[0]
+        safe_zone = agents.get(SafeZone)[0]
         # Reverse lists so we can pop from the end to get observations in 
         # order of agent body index.
         if not self.omniscent:
@@ -363,14 +368,15 @@ class MaSurvivalEnv(gym.Env):
         seens = list(reversed(seens))
         scans = list(reversed(lidars.scans))
         obs_dead = lambda i: (
-            (i,0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, [], [], [], [])
+            (i,0,0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, (0,0,0), [], [], [], [])
+        safe_zone_obs = (*safe_zone.zone[1].position, safe_zone.zone[0].radius)
         obss = []
         for agent_id, body in enumerate(bodies):
             if body is None:
                 obss.append(obs_dead(agent_id))
                 continue
             self_: Vec = (
-                agent_id, *body.position, body.angle, *body.linearVelocity, 
+                agent_id, health.healths[body], *body.position, body.angle, *body.linearVelocity, 
                 body.angularVelocity)
             depths = [lidars.depth if scan is None else scan[1]
                       for scan in  scans.pop()]
@@ -392,7 +398,7 @@ class MaSurvivalEnv(gym.Env):
                 if group is self.simulation.groups['agents']:
                     other_agent_id = [c == b for i, c in enumerate(bodies)][0]
                     qvel: Vec = (*b.linearVelocity, b.angularVelocity)
-                    others.append((other_agent_id, *qpos, *qvel))
+                    others.append((other_agent_id, health.healths.get(b, 0), *qpos, *qvel))
                 elif group is self.simulation.groups['boxes']:
                     type_ = 0
                     assert isinstance(b.fixtures[0].shape, b2PolygonShape)
@@ -414,21 +420,22 @@ class MaSurvivalEnv(gym.Env):
                     objects.append((*qpos, float(type_), *size))
                 else:
                     assert False, 'How did we get here?'
-            obss.append((self_, depths, others, inventory, items, objects))
+            obss.append((self_, depths, safe_zone_obs, others, inventory, items, objects))
 
         obss_np = _zero_element(self.observation_space)
-        for i in [0,1]:
+        for i in [0,1,2]:
             obss_np[i] = np.array([obs[i] for obs in obss], dtype=np.float32)
+        ent_offset = 3
         for i in range(4):
             for j, obs in enumerate(obss):
-                if len(obs[i+2]) > 0:
-                    obss_np[2][i][0][j,:len(obs[i+2])] = np.array(obs[i+2], dtype=np.float32)
-                    obss_np[2][i][1][j,:len(obs[i+2])] = 1
+                if len(obs[i+ent_offset]) > 0:
+                    obss_np[ent_offset][i][0][j,:len(obs[i+ent_offset])] = np.array(obs[i+ent_offset], dtype=np.float32)
+                    obss_np[ent_offset][i][1][j,:len(obs[i+ent_offset])] = 1
         #assert self.observation_space.contains(obss_np)
         return obss_np
 
     def queue_actions(self, agents: sim.Group, all_actions: Action):
-        d = [0., 1., -1.]
+        d = [-1., 0., 1.]
         bodies = agents.get(sim.IndexBodies)[0].bodies
         actions = []
         for i, a in enumerate(all_actions):
@@ -446,14 +453,14 @@ class MaSurvivalEnv(gym.Env):
         rewards = np.zeros(self.n_agents, dtype=np.float32)
         if not sparse:
             rewards += np.array([-1 if body is None else +1 for body in bodies])
-        game = agents.get(BattleRoyale)[0]
-        if game.over:
-            agent_health = self.config['health']['health']
-            n_heals = self.config['heals']['reset_spawns']['n_spawns']
-            healing = self.config['heals']['heal']['healing']
-            max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
-            prize = max_prize - self.steps
-            rewards += np.array([prize if won else -prize for won in game.results])
+        #game = agents.get(BattleRoyale)[0]
+        #if game.over:
+        #    agent_health = self.config['health']['health']
+        #    n_heals = self.config['heals']['reset_spawns']['n_spawns']
+        #    healing = self.config['heals']['heal']['healing']
+        #    max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
+        #    prize = max_prize - self.steps
+        #    rewards += np.array([prize if won else -prize for won in game.results])
         return rewards
 
 
