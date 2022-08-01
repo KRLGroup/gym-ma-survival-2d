@@ -9,8 +9,8 @@ from masurvival.envs.masurvival_env import MaSurvivalEnv
 def main(render_mode: Optional[str], gif_fpath: Optional[str] = None,
          record_interval: int = 10):
     env = MaSurvivalEnv()
-    #print(env.action_space)
-    #print(env.observation_space)
+    print(env.action_space)
+    print(env.observation_space)
     env.reset()
     frames: List[np.ndarray] = []
     if render_mode is not None:

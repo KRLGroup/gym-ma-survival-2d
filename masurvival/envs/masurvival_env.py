@@ -80,7 +80,7 @@ default_config: Config = {
     },
     'heals': {
         'reset_spawns': {
-            'n_items': 0,
+            'n_items': 6,
             'item_size': 0.5,
         },
         'heal': {
@@ -139,6 +139,7 @@ class MaSurvivalEnv(gym.Env):
 
     def __init__(
             self, config: Optional[Config] = None, omniscent: bool = False):
+        self.np_random = np.random.default_rng()
         self.omniscent = omniscent
         self.config = recursive_apply(lambda _: _, self.config)
         if config is not None:
@@ -265,7 +266,8 @@ class MaSurvivalEnv(gym.Env):
                      Tuple[Observation, Dict[Any, Any]]]:
         #if seed is None and 'seed' in self.config['rng']:
         #    seed = self.config['rng']['seed']
-        super().reset(seed=seed)
+        #super().reset(seed=seed)
+        #super().reset()
         self.spawner.rng = self.np_random
         self.spawner.reset()
         self.simulation.reset()
