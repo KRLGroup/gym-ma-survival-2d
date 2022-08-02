@@ -145,10 +145,12 @@ class MaSurvivalEnv(gym.Env):
         if config is not None:
             for k, subconfig in config.items():
                 self.config[k] |= subconfig
-        self.observation_space, self.observation_sizes = self._compute_obs_space()
+        self.observation_space = self._compute_obs_space()
         n_agents = self.config['agents']['n_agents']
-        actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
-        self.action_space = spaces.Tuple(actions_spaces)
+        assert n_agents == 1
+        #actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
+        #self.action_space = spaces.Tuple(actions_spaces)
+        self.action_space = self.agent_action_space
         spawn_grid_config = self.config['spawn_grid']
         agents_config = self.config['agents']
         agent_size = agents_config.pop('agent_size')
@@ -220,44 +222,59 @@ class MaSurvivalEnv(gym.Env):
         }
         self.simulation = sim.Simulation(groups=groups)
 
+    # for the case of heals only
     def _compute_obs_space(self):
         n_lasers = self.config['lidars']['n_lasers']
-        n_agents = self.n_agents
-        n_boxes = self.config['boxes']['n_boxes']
         n_heals = self.config['heals']['reset_spawns']['n_items']
-        n_walls = 4
-        agent_size = 1+1+3+3
-        safe_zone_size = 3
-        item_size = 1+3
-        object_size = 1+2+3
-        inventory_item_size = 1
-        inventory_slots = self.config['inventory']['slots']
+        agent_size = 1+3+3 # health, qpos, qvel
+        safe_zone_size = 3 # center & radius
+        item_size = 2 # pos
         R = dict(low=float('-inf'), high=float('inf'))
-        B = dict(low=0., high=1.)
-        space = spaces.Tuple([
-            spaces.Box(**R, shape=(n_agents, agent_size,)),
-            spaces.Box(**R, shape=(n_agents, n_lasers,)),
-            spaces.Box(**R, shape=(n_agents, safe_zone_size)),
-            spaces.Tuple([
-                spaces.Tuple([
-                    spaces.Box(**R, shape=(n_agents, n_agents-1, agent_size)),
-                    spaces.Box(**B, shape=(n_agents, n_agents-1,)),
-                ]),
-                spaces.Tuple([
-                    spaces.Box(**R, shape=(n_agents, inventory_slots, inventory_item_size)),
-                    spaces.Box(**B, shape=(n_agents, inventory_slots,))
-                ]),
-                spaces.Tuple([
-                    spaces.Box(**R, shape=(n_agents, n_heals+n_boxes, item_size)),
-                    spaces.Box(**B, shape=(n_agents, n_heals+n_boxes,))
-                ]),
-                spaces.Tuple([
-                    spaces.Box(**R, shape=(n_agents, n_walls+n_boxes, object_size)),
-                    spaces.Box(**B, shape=(n_agents, n_walls+n_boxes,))
-                ]),
-            ])
-        ])
-        return space, [agent_size, n_lasers, safe_zone_size, [agent_size, inventory_item_size, item_size, object_size]]
+        space = spaces.Dict({
+            'self': spaces.Box(**R, shape=(agent_size,)),
+            'zone': spaces.Box(**R, shape=(safe_zone_size,)),
+            #'heals': spaces.Box(**R, shape=(n_heals, item_size)),
+        })
+        return space
+
+#     def _compute_obs_space(self):
+#         n_lasers = self.config['lidars']['n_lasers']
+#         n_agents = self.n_agents
+#         n_boxes = self.config['boxes']['n_boxes']
+#         n_heals = self.config['heals']['reset_spawns']['n_items']
+#         n_walls = 4
+#         agent_size = 1+1+3+3
+#         safe_zone_size = 3
+#         item_size = 1+3
+#         object_size = 1+2+3
+#         inventory_item_size = 1
+#         inventory_slots = self.config['inventory']['slots']
+#         R = dict(low=float('-inf'), high=float('inf'))
+#         B = dict(low=0., high=1.)
+#         space = spaces.Tuple([
+#             spaces.Box(**R, shape=(n_agents, agent_size,)),
+#             spaces.Box(**R, shape=(n_agents, n_lasers,)),
+#             spaces.Box(**R, shape=(n_agents, safe_zone_size)),
+#             spaces.Tuple([
+#                 spaces.Tuple([
+#                     spaces.Box(**R, shape=(n_agents, n_agents-1, agent_size)),
+#                     spaces.Box(**B, shape=(n_agents, n_agents-1,)),
+#                 ]),
+#                 spaces.Tuple([
+#                     spaces.Box(**R, shape=(n_agents, inventory_slots, inventory_item_size)),
+#                     spaces.Box(**B, shape=(n_agents, inventory_slots,))
+#                 ]),
+#                 spaces.Tuple([
+#                     spaces.Box(**R, shape=(n_agents, n_heals+n_boxes, item_size)),
+#                     spaces.Box(**B, shape=(n_agents, n_heals+n_boxes,))
+#                 ]),
+#                 spaces.Tuple([
+#                     spaces.Box(**R, shape=(n_agents, n_walls+n_boxes, object_size)),
+#                     spaces.Box(**B, shape=(n_agents, n_walls+n_boxes,))
+#                 ]),
+#             ])
+#         ])
+#         return space, [agent_size, n_lasers, safe_zone_size, [agent_size, inventory_item_size, item_size, object_size]]
 
     # if given, the seed takes precedence over the config seed
     def reset(self, seed: int = None, return_info: bool = False,
@@ -281,15 +298,15 @@ class MaSurvivalEnv(gym.Env):
              action: Action) -> Tuple[Observation, Reward, bool, Dict]:
         assert self.action_space.contains(action), "Invalid action."
         agents = self.simulation.groups['agents']
-        self.queue_actions(agents, action)
+        self.queue_actions(agents, [action])
         self.simulation.step()
         obs = self.fetch_observations(agents)
-        reward = self.compute_rewards(agents, **self.config['reward_scheme'])
+        rewards = self.compute_rewards(agents, **self.config['reward_scheme'])
         #done = agents.get(BattleRoyale)[0].over
         done = all([b is None for b in agents.get(sim.IndexBodies)[0].bodies])
         info: Dict = {}
         self.steps += 1
-        return obs, reward, done, info # type: ignore
+        return obs, rewards[0], done, info # type: ignore
 
     # Ignores the render mode after the first call. TODO change that
     # Always returns the rendered frame, even with 'human' mode.
@@ -352,97 +369,114 @@ class MaSurvivalEnv(gym.Env):
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
         bodies = agents.get(sim.IndexBodies)[0].bodies
-        lidars = agents.get(sim.Lidars)[0]
-        inventories = agents.get(Inventory)[0]
         health = agents.get(Health)[0]
         safe_zone = agents.get(SafeZone)[0]
-        # Reverse lists so we can pop from the end to get observations in 
-        # order of agent body index.
-        if not self.omniscent:
-            seens = agents.get(sim.Cameras)[0].seen
+        agent = bodies[0]
+        x = {}
+        if agent is not None:
+            x['self'] = np.array([health.healths[agent], *agent.position, agent.angle, *agent.linearVelocity, agent.angularVelocity])
         else:
-            everything = []
-            for g in self.simulation.groups.values():
-                everything += g.bodies
-            seens = [list(everything) for _ in range(self.n_agents)]
-            for i, agent_body in enumerate(bodies):
-                seens[i].remove(agent_body)
-        seens = list(reversed(seens))
-        scans = list(reversed(lidars.scans))
-        obs_dead = lambda i: (
-            (i,0,0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, (0,0,0), [], [], [], [])
-        safe_zone_obs = (*safe_zone.zone[1].position, safe_zone.zone[0].radius)
-        obss = []
-        for agent_id, body in enumerate(bodies):
-            if body is None:
-                obss.append(obs_dead(agent_id))
-                continue
-            self_: Vec = (
-                agent_id, health.healths[body], *body.position, body.angle, *body.linearVelocity, 
-                body.angularVelocity)
-            depths = [lidars.depth if scan is None else scan[1]
-                      for scan in  scans.pop()]
-            seen = seens.pop()
-            inventory_items = inventories.inventories[body]
-            inventory = []
-            for item in inventory_items:
-                type_ = 0 if isinstance(item, Heal) else 1
-                item_obs: Vec = (float(type_),)
-                inventory.append(item_obs)
-            others = []
-            items = []
-            objects = []
-            for b in seen:
-                group = sim.Group.body_group(b)
-                qpos: Vec = (*b.position, b.angle)
-                # Object types: 0 boxes, 1 walls
-                # Item types: 0 heals, 1 broken boxes
-                if group is self.simulation.groups['agents']:
-                    other_agent_id = [c == b for i, c in enumerate(bodies)][0]
-                    qvel: Vec = (*b.linearVelocity, b.angularVelocity)
-                    others.append((other_agent_id, health.healths.get(b, 0), *qpos, *qvel))
-                elif group is self.simulation.groups['boxes']:
-                    type_ = 0
-                    assert isinstance(b.fixtures[0].shape, b2PolygonShape)
-                    try:
-                        size = sim.rect_dimensions(b.fixtures[0].shape)
-                    except AssertionError:
-                        print(b.fixtures[0].shape.vertices)
-                        raise
-                    objects.append((*qpos, float(type_), *size))
-                elif group is self.simulation.groups['box_items']:
-                    type_ = 1
-                    items.append((*qpos, float(type_)))
-                elif group is self.simulation.groups['heals']:
-                    type_ = 0
-                    items.append((*qpos, float(type_)))
-                elif group is self.simulation.groups['walls']:
-                    type_ = 1
-                    size = sim.rect_dimensions(b.fixtures[0].shape)
-                    objects.append((*qpos, float(type_), *size))
-                else:
-                    assert False, 'How did we get here?'
-            obss.append((self_, depths, safe_zone_obs, others, inventory, items, objects))
+            x['self'] = np.zeros(self.observation_space['self'].shape)
+        x['zone'] = np.array([*safe_zone.zone[1].position, safe_zone.zone[0].radius])
+#         x['heals'] = np.zeros(self.observation_space['heals'].shape)
+#         for i, heal in enumerate(self.simulation.groups['heals'].bodies):
+#             x['heals'][i] = np.array([*heal.position])
+        return x
 
-        obss_np = _zero_element(self.observation_space)
-        for i in [0,1,2]:
-            obss_np[i] = np.array([obs[i] for obs in obss], dtype=np.float32)
-        ent_offset = 3
-        for i in range(4):
-            for j, obs in enumerate(obss):
-                if len(obs[i+ent_offset]) > 0:
-                    obss_np[ent_offset][i][0][j,:len(obs[i+ent_offset])] = np.array(obs[i+ent_offset], dtype=np.float32)
-                    obss_np[ent_offset][i][1][j,:len(obs[i+ent_offset])] = 1
-        #assert self.observation_space.contains(obss_np)
-        return obss_np
+#     def fetch_observations(self, agents: sim.Group) -> Observation:
+#         bodies = agents.get(sim.IndexBodies)[0].bodies
+#         lidars = agents.get(sim.Lidars)[0]
+#         inventories = agents.get(Inventory)[0]
+#         health = agents.get(Health)[0]
+#         safe_zone = agents.get(SafeZone)[0]
+#         # Reverse lists so we can pop from the end to get observations in 
+#         # order of agent body index.
+#         if not self.omniscent:
+#             seens = agents.get(sim.Cameras)[0].seen
+#         else:
+#             everything = []
+#             for g in self.simulation.groups.values():
+#                 everything += g.bodies
+#             seens = [list(everything) for _ in range(self.n_agents)]
+#             for i, agent_body in enumerate(bodies):
+#                 seens[i].remove(agent_body)
+#         seens = list(reversed(seens))
+#         scans = list(reversed(lidars.scans))
+#         obs_dead = lambda i: (
+#             (i,0,0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, (0,0,0), [], [], [], [])
+#         safe_zone_obs = (*safe_zone.zone[1].position, safe_zone.zone[0].radius)
+#         obss = []
+#         for agent_id, body in enumerate(bodies):
+#             if body is None:
+#                 obss.append(obs_dead(agent_id))
+#                 continue
+#             self_: Vec = (
+#                 agent_id, health.healths[body], *body.position, body.angle, *body.linearVelocity, 
+#                 body.angularVelocity)
+#             depths = [lidars.depth if scan is None else scan[1]
+#                       for scan in  scans.pop()]
+#             seen = seens.pop()
+#             inventory_items = inventories.inventories[body]
+#             inventory = []
+#             for item in inventory_items:
+#                 type_ = 0 if isinstance(item, Heal) else 1
+#                 item_obs: Vec = (float(type_),)
+#                 inventory.append(item_obs)
+#             others = []
+#             items = []
+#             objects = []
+#             for b in seen:
+#                 group = sim.Group.body_group(b)
+#                 qpos: Vec = (*b.position, b.angle)
+#                 # Object types: 0 boxes, 1 walls
+#                 # Item types: 0 heals, 1 broken boxes
+#                 if group is self.simulation.groups['agents']:
+#                     other_agent_id = [c == b for i, c in enumerate(bodies)][0]
+#                     qvel: Vec = (*b.linearVelocity, b.angularVelocity)
+#                     others.append((other_agent_id, health.healths.get(b, 0), *qpos, *qvel))
+#                 elif group is self.simulation.groups['boxes']:
+#                     type_ = 0
+#                     assert isinstance(b.fixtures[0].shape, b2PolygonShape)
+#                     try:
+#                         size = sim.rect_dimensions(b.fixtures[0].shape)
+#                     except AssertionError:
+#                         print(b.fixtures[0].shape.vertices)
+#                         raise
+#                     objects.append((*qpos, float(type_), *size))
+#                 elif group is self.simulation.groups['box_items']:
+#                     type_ = 1
+#                     items.append((*qpos, float(type_)))
+#                 elif group is self.simulation.groups['heals']:
+#                     type_ = 0
+#                     items.append((*qpos, float(type_)))
+#                 elif group is self.simulation.groups['walls']:
+#                     type_ = 1
+#                     size = sim.rect_dimensions(b.fixtures[0].shape)
+#                     objects.append((*qpos, float(type_), *size))
+#                 else:
+#                     assert False, 'How did we get here?'
+#             obss.append((self_, depths, safe_zone_obs, others, inventory, items, objects))
+# 
+#         obss_np = _zero_element(self.observation_space)
+#         for i in [0,1,2]:
+#             obss_np[i] = np.array([obs[i] for obs in obss], dtype=np.float32)
+#         ent_offset = 3
+#         for i in range(4):
+#             for j, obs in enumerate(obss):
+#                 if len(obs[i+ent_offset]) > 0:
+#                     obss_np[ent_offset][i][0][j,:len(obs[i+ent_offset])] = np.array(obs[i+ent_offset], dtype=np.float32)
+#                     obss_np[ent_offset][i][1][j,:len(obs[i+ent_offset])] = 1
+#         #assert self.observation_space.contains(obss_np)
+#         return obss_np
 
     def queue_actions(self, agents: sim.Group, all_actions: Action):
         d = [-1., 0., 1.]
         bodies = agents.get(sim.IndexBodies)[0].bodies
-        actions = []
-        for i, a in enumerate(all_actions):
-            if bodies[i] is not None:
-                actions.append(a)
+        actions = all_actions
+        #actions = []
+        #for i, a in enumerate(all_actions):
+        #    if bodies[i] is not None:
+        #        actions.append(a)
         motor_controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
         agents.get(sim.DynamicMotors)[0].controls = motor_controls
         agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
