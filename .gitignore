@@ -1,4 +1,5 @@
 runs/
+models/
 untracked/
 stable_baselines3/
 .DS_Store

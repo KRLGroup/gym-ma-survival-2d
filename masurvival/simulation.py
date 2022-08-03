@@ -320,7 +320,10 @@ class Cameras(Module):
             for other in others:
                 if other == body:
                     continue
-                scan = laser_scan(group.world, body.position, other.position)
+                d = other.position - body.position
+                # Add a small epsilon to ensure the laser scan hits.
+                end = body.position + (1+1e-6)*d
+                scan = laser_scan(group.world, body.position, end)
                 if scan[0].body == other: # type: ignore
                     self.seen[-1].append(scan[0].body) # type: ignore
 

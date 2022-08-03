@@ -80,7 +80,7 @@ default_config: Config = {
     },
     'heals': {
         'reset_spawns': {
-            'n_items': 6,
+            'n_items': 4,
             'item_size': 0.5,
         },
         'heal': {
@@ -231,9 +231,9 @@ class MaSurvivalEnv(gym.Env):
         item_size = 2 # pos
         R = dict(low=float('-inf'), high=float('inf'))
         space = spaces.Dict({
-            'self': spaces.Box(**R, shape=(agent_size,)),
+            'agent': spaces.Box(**R, shape=(agent_size,)),
             'zone': spaces.Box(**R, shape=(safe_zone_size,)),
-            #'heals': spaces.Box(**R, shape=(n_heals, item_size)),
+            'heals': spaces.Box(**R, shape=(n_heals, item_size)),
         })
         return space
 
@@ -374,13 +374,14 @@ class MaSurvivalEnv(gym.Env):
         agent = bodies[0]
         x = {}
         if agent is not None:
-            x['self'] = np.array([health.healths[agent], *agent.position, agent.angle, *agent.linearVelocity, agent.angularVelocity])
+            x['agent'] = np_floats([health.healths[agent], *agent.position, agent.angle, *agent.linearVelocity, agent.angularVelocity])
         else:
-            x['self'] = np.zeros(self.observation_space['self'].shape)
-        x['zone'] = np.array([*safe_zone.zone[1].position, safe_zone.zone[0].radius])
-#         x['heals'] = np.zeros(self.observation_space['heals'].shape)
-#         for i, heal in enumerate(self.simulation.groups['heals'].bodies):
-#             x['heals'][i] = np.array([*heal.position])
+            x['agent'] = np_float_zeros(self.observation_space['agent'].shape)
+        x['zone'] = np_floats([*safe_zone.zone[1].position, safe_zone.zone[0].radius])
+        x['heals'] = np_float_zeros(self.observation_space['heals'].shape)
+        for i, heal in enumerate(self.simulation.groups['heals'].bodies):
+            x['heals'][i] = np_floats([*heal.position])
+        #TODO visibility mask
         return x
 
 #     def fetch_observations(self, agents: sim.Group) -> Observation:
@@ -522,4 +523,11 @@ def recursive_apply(f: Callable, *args: Any, default: Optional[Any] = None, stru
                 for k in args[struct_arg].keys()}
     else:
         return f(*args)
+
+
+def np_floats(a):
+    return np.array(a, dtype=np.float32)
+
+def np_float_zeros(shape):
+    return np.zeros(shape, dtype=np.float32)
 
