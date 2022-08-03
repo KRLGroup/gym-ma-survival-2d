@@ -3,7 +3,6 @@ models/
 untracked/
 stable_baselines3/
 .DS_Store
-*.zip
 
 # From https://github.com/github/gitignore/blob/main/Python.gitignore
 

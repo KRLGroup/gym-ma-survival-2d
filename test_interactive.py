@@ -8,6 +8,7 @@ from masurvival.envs.masurvival_env import MaSurvivalEnv
 
 def get_action_from_keyboard(last_pressed):
     keyboard = pygame.key.get_pressed()
+    #TODO update this with correct null actions
     action = [0, 0, 0, 0, 0, 0]
     if keyboard[pygame.K_w] and not keyboard[pygame.K_s]:
         action[0] = 1
