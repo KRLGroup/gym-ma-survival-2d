@@ -6,22 +6,25 @@ import pygame
 
 from masurvival.envs.masurvival_env import MaSurvivalEnv
 
+def zero_action():
+    return [1, 1, 1, 0, 0, 0]
+
 def get_action_from_keyboard(last_pressed):
     keyboard = pygame.key.get_pressed()
     #TODO update this with correct null actions
-    action = [0, 0, 0, 0, 0, 0]
+    action = zero_action()
     if keyboard[pygame.K_w] and not keyboard[pygame.K_s]:
-        action[0] = 1
-    if keyboard[pygame.K_s] and not keyboard[pygame.K_w]:
         action[0] = 2
+    if keyboard[pygame.K_s] and not keyboard[pygame.K_w]:
+        action[0] = 0
     if keyboard[pygame.K_a] and not keyboard[pygame.K_d]:
-        action[1] = 1
-    if keyboard[pygame.K_d] and not keyboard[pygame.K_a]:
         action[1] = 2
+    if keyboard[pygame.K_d] and not keyboard[pygame.K_a]:
+        action[1] = 0
     if keyboard[pygame.K_LEFT] and not keyboard[pygame.K_RIGHT]:
-        action[2] = 1
-    if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
         action[2] = 2
+    if keyboard[pygame.K_RIGHT] and not keyboard[pygame.K_LEFT]:
+        action[2] = 0
     if keyboard[pygame.K_c] and not last_pressed[pygame.K_c]:
         action[3] = 1
     if keyboard[pygame.K_e] and not last_pressed[pygame.K_e]:
@@ -54,7 +57,7 @@ def main(gif_fpath: Optional[str] = None, record_interval: int = 10):
         actions = env.action_space.sample()
         user_action, pressed = get_action_from_keyboard(pressed)
         if env.n_agents >= 2:
-            actions = (user_action,) + ([0,0,0,0,0,0],) + actions[2:]
+            actions = (user_action,) + (zero_action(),) + actions[2:]
         elif env.n_agents == 1:
             actions = (user_action,)
         action = actions

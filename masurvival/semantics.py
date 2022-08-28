@@ -478,23 +478,38 @@ class SafeZone(sim.Module):
     endgame: bool
     zone: Tuple[b2CircleShape, b2Transform]
     outliers: List[b2Body]
+    room_size: float
+    rng: np.random.Generator
 
     def __init__(
             self, phases: int, cooldown: int, damage: int,
-            radiuses: List[float], centers: List[sim.Vec2]):
+            radiuses: List[float], centers: List[sim.Vec2], room_size: Optional[float] = None):
         self.phases = phases
         self.cooldown = cooldown
         self.damage = damage
         self.radiuses = list(radiuses)
         self.radiuses.append(0)
-        self.centers = [b2Vec2(c) for c in centers]
-        self.centers.append(b2Vec2(0,0))
+        if centers == 'random':
+            assert room_size is not None
+            self.room_size = room_size
+        else:
+            self.centers = [b2Vec2(c) for c in centers]
+            self.centers.append(b2Vec2(0,0))
 
     # compute the maximum number of steps an agent can survive, provided it always stays inside the safe zone, and also considering the steps it can survive after the zone becomes void
     def max_lifespan(self, max_health: int):
         return (self.phases-1)*2*self.cooldown + math.ceil(max_health/self.damage)
 
     def post_reset(self, group: sim.Group):
+        # This means 'random' was given for 'centers' in init.
+        if hasattr(self, 'room_size'):
+            reverse_centers = []
+            for r in reversed(self.radiuses):
+                L = self.room_size - 2*r
+                cx = (self.rng.random() * L) - L/2
+                cy = (self.rng.random() * L) - L/2
+                reverse_centers.append(b2Vec2(cx, cy))
+            self.centers = list(reversed(reverse_centers))
         self.t_cooldown = self.cooldown
         self.t_shrink = 0
         self.phase = 0

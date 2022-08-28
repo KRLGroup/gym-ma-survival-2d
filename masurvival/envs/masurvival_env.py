@@ -43,7 +43,7 @@ default_config: Config = {
         'cooldown': 300,
     },
     'agents': {
-        'n_agents': 1,
+        'n_agents': 2,
         'agent_size': 1,
     },
     'cameras': {
@@ -104,7 +104,7 @@ default_config: Config = {
         'cooldown': 100,
         'damage': 1,
         'radiuses': [10, 5, 2.5, 1],
-        'centers': [(0,0), (0,0), (0,0), (0,0)],
+        'centers': 'random',
     },
 }
 
@@ -147,11 +147,10 @@ class MaSurvivalEnv(gym.Env):
                 self.config[k] |= subconfig
         self.observation_space = self._compute_obs_space()
         n_agents = self.config['agents']['n_agents']
-        assert n_agents == 1
-        #actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
-        #self.action_space = spaces.Tuple(actions_spaces)
-        self.action_space = self.agent_action_space
+        actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
+        self.action_space = spaces.Tuple(actions_spaces)
         spawn_grid_config = self.config['spawn_grid']
+        room_size = spawn_grid_config['floor_size']
         agents_config = self.config['agents']
         agent_size = agents_config.pop('agent_size')
         agents_config['prototype'] = agent_prototype(agent_size)
@@ -167,6 +166,7 @@ class MaSurvivalEnv(gym.Env):
         give_config = self.config['give']
         death_drop_config = self.config['death_drop']
         safe_zone_config = self.config['safe_zone']
+        safe_zone_config['room_size'] = room_size
         self.spawner = SpawnGrid(**spawn_grid_config)
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
@@ -212,7 +212,6 @@ class MaSurvivalEnv(gym.Env):
             ResetSpawns(spawner=self.spawner, **heals_spawn_config),
             Heal(**heals_heal_config),]
             #Item(),]
-        room_size = spawn_grid_config['floor_size']
         groups = {
             'boxes': sim.Group(boxes_modules),
             'box_items': sim.Group([boxes_items]),
@@ -222,18 +221,18 @@ class MaSurvivalEnv(gym.Env):
         }
         self.simulation = sim.Simulation(groups=groups)
 
-    # for the case of heals only
     def _compute_obs_space(self):
         n_lasers = self.config['lidars']['n_lasers']
         n_heals = self.config['heals']['reset_spawns']['n_items']
-        agent_size = 1+3+3 # health, qpos, qvel
+        agent_size = 1+1+3+3 # ID, health, qpos, qvel
         safe_zone_size = 3 # center & radius
         item_size = 2 # pos
         R = dict(low=float('-inf'), high=float('inf'))
         space = spaces.Dict({
-            'agent': spaces.Box(**R, shape=(agent_size,)),
-            'zone': spaces.Box(**R, shape=(safe_zone_size,)),
-            'heals': spaces.Box(**R, shape=(n_heals, item_size)),
+            'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
+            'other': spaces.Box(**R, shape=(self.n_agents, agent_size)),
+            'zone': spaces.Box(**R, shape=(self.n_agents, safe_zone_size)),
+            'heals': spaces.Box(**R, shape=(self.n_agents, n_heals, item_size)),
         })
         return space
 
@@ -287,6 +286,7 @@ class MaSurvivalEnv(gym.Env):
         #super().reset()
         self.spawner.rng = self.np_random
         self.spawner.reset()
+        self.simulation.groups['agents'].get(SafeZone)[0].rng = self.np_random
         self.simulation.reset()
         self.simulation.groups['agents'].get(DeathDrop)[0].rng = self.np_random
         obs = self.fetch_observations(self.simulation.groups['agents'])
@@ -295,10 +295,11 @@ class MaSurvivalEnv(gym.Env):
         return (obs, info) if return_info else obs # type: ignore
 
     def step(self, # type: ignore
-             action: Action) -> Tuple[Observation, Reward, bool, Dict]:
-        assert self.action_space.contains(action), "Invalid action."
+             actions: Action) -> Tuple[Observation, Reward, bool, Dict]:
+        actions = tuple(a for a in actions)
+        assert self.action_space.contains(actions), f"Invalid action {actions}."
         agents = self.simulation.groups['agents']
-        self.queue_actions(agents, [action])
+        self.queue_actions(agents, actions)
         self.simulation.step()
         obs = self.fetch_observations(agents)
         rewards = self.compute_rewards(agents, **self.config['reward_scheme'])
@@ -306,7 +307,7 @@ class MaSurvivalEnv(gym.Env):
         done = all([b is None for b in agents.get(sim.IndexBodies)[0].bodies])
         info: Dict = {}
         self.steps += 1
-        return obs, rewards[0], done, info # type: ignore
+        return obs, rewards, done, info # type: ignore
 
     # Ignores the render mode after the first call. TODO change that
     # Always returns the rendered frame, even with 'human' mode.
@@ -319,20 +320,20 @@ class MaSurvivalEnv(gym.Env):
                 self.simulation.groups['agents']: [
                     rendering.SafeZone(
                         **rendering.safe_zone_view_config), # type: ignore
-                    rendering.ImmunityCooldown(
-                        **rendering.immunity_view_config), # type: ignore
+                    #rendering.ImmunityCooldown(
+                    #    **rendering.immunity_view_config), # type: ignore
                     rendering.Bodies(
                         **rendering.agent_bodies_view_config), # type: ignore
                     rendering.BodyIndices(
                         **rendering.body_indices_view_config), # type: ignore
                     #rendering.Lidars(
                     #    **rendering.agent_lidars_view_config), # type: ignore
-                    rendering.Cameras(
-                        **rendering.cameras_view_config), # type: ignore
+                    #rendering.Cameras(
+                    #    **rendering.cameras_view_config), # type: ignore
                     rendering.Health(
                         **rendering.health_view_config), # type: ignore
-                    #rendering.Melee(
-                    #    **rendering.melee_view_config), # type: ignore
+                    rendering.Melee(
+                        **rendering.melee_view_config), # type: ignore
                     #rendering.Inventory(
                     #    **rendering.inventory_view_config), # type: ignore
                     #rendering.GiveLast(
@@ -368,20 +369,41 @@ class MaSurvivalEnv(gym.Env):
             self.canvas.close()
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
-        bodies = agents.get(sim.IndexBodies)[0].bodies
+        agent_bodies = agents.get(sim.IndexBodies)[0].bodies
         health = agents.get(Health)[0]
         safe_zone = agents.get(SafeZone)[0]
-        agent = bodies[0]
         x = {}
-        if agent is not None:
-            x['agent'] = np_floats([health.healths[agent], *agent.position, agent.angle, *agent.linearVelocity, agent.angularVelocity])
-        else:
-            x['agent'] = np_float_zeros(self.observation_space['agent'].shape)
-        x['zone'] = np_floats([*safe_zone.zone[1].position, safe_zone.zone[0].radius])
-        x['heals'] = np_float_zeros(self.observation_space['heals'].shape)
+        x['agent'] = self._fetch_self_observations(agent_bodies, health)
+        x_zone = np_floats([
+            *safe_zone.zone[1].position,
+            safe_zone.zone[0].radius
+        ])
+        assert self.n_agents == 2
+        x['other'] = np.vstack([x['agent'][1], x['agent'][0]])
+        x['zone'] = np.tile(x_zone, [self.n_agents, 1])
+        x_heals = np_float_zeros(self.observation_space['heals'].shape[1:])
         for i, heal in enumerate(self.simulation.groups['heals'].bodies):
-            x['heals'][i] = np_floats([*heal.position])
+            x_heals[i] = np_floats([*heal.position])
+        x['heals'] = np.tile(x_heals, [self.n_agents, 1, 1])
         #TODO visibility mask
+        assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
+        return x
+
+    def _fetch_self_observations(self, agent_bodies, health):
+        x = np_float_zeros(self.observation_space['agent'].shape)
+        for i, agent_body in enumerate(agent_bodies):
+            if agent_body is None:
+                x[i][0] = i
+                continue
+            x[i] = np_floats([
+                i,
+                health.healths[agent_body],
+                #TODO does it make sense to give the agent a very far away position?
+                *agent_body.position,
+                agent_body.angle,
+                *agent_body.linearVelocity,
+                agent_body.angularVelocity
+            ])
         return x
 
 #     def fetch_observations(self, agents: sim.Group) -> Observation:
@@ -473,16 +495,18 @@ class MaSurvivalEnv(gym.Env):
     def queue_actions(self, agents: sim.Group, all_actions: Action):
         d = [-1., 0., 1.]
         bodies = agents.get(sim.IndexBodies)[0].bodies
-        actions = all_actions
-        #actions = []
-        #for i, a in enumerate(all_actions):
-        #    if bodies[i] is not None:
-        #        actions.append(a)
+        actions = []
+        #TODO check actions are applied to the correct bodies
+        for i, a in enumerate(all_actions):
+            if bodies[i] is not None:
+                actions.append(a)
         motor_controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
         agents.get(sim.DynamicMotors)[0].controls = motor_controls
         agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
         agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions]
         agents.get(GiveLast)[0].give = [bool(a[5]) for a in actions]
+        #agents.get(UseLast)[0].uses = [bool(a[3]) for a in actions]
+        #agents.get(GiveLast)[0].give = [bool(a[4]) for a in actions]
 
     def compute_rewards(
             self, agents: sim.Group, sparse: bool) -> Tuple[float, ...]:
@@ -490,14 +514,14 @@ class MaSurvivalEnv(gym.Env):
         rewards = np.zeros(self.n_agents, dtype=np.float32)
         if not sparse:
             rewards += np.array([-1 if body is None else +1 for body in bodies])
-        #game = agents.get(BattleRoyale)[0]
-        #if game.over:
-        #    agent_health = self.config['health']['health']
-        #    n_heals = self.config['heals']['reset_spawns']['n_spawns']
-        #    healing = self.config['heals']['heal']['healing']
-        #    max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
-        #    prize = max_prize - self.steps
-        #    rewards += np.array([prize if won else -prize for won in game.results])
+#         game = agents.get(BattleRoyale)[0]
+#         if game.over:
+#             agent_health = self.config['health']['health']
+#             n_heals = self.config['heals']['reset_spawns']['n_spawns']
+#             healing = self.config['heals']['heal']['healing']
+#             max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
+#             prize = 1. if sparse else (max_prize - self.steps) / max_prize
+#             rewards += np.array([prize if won else -prize for won in game.results])
         return rewards
 
 

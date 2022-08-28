@@ -12,19 +12,43 @@ import torch.nn.functional as F
 from stable_baselines3 import PPO
 
 from masurvival.envs.masurvival_env import MaSurvivalEnv
+from policy_optimization.vec_env_costume import VecEnvCostume
 
-exp_name = 'models/ppo-mas-4heals-earlystop-2.5M.bak'
+def unbatch_obs(obs, n_agents):
+    xs = [dict() for _ in range(n_agents)]
+    for k, v in obs.items():
+        for i, x in enumerate(v):
+            xs[i][k] = x
+    return xs
 
-env = MaSurvivalEnv()
+exp_name = 'models/tmp'
+
+env = VecEnvCostume(MaSurvivalEnv())
 
 model = PPO.load(exp_name, env=env)
 
 obs = env.reset()
 done = False
-R = 0
+R = np.zeros(env.env.n_agents)
+frames = []
+i = 0
 while not done:
-    action, _states = model.predict(obs)
-    obs, reward, done, info = env.step(action)
-    R += reward
-    env.render()
+    frame = env.render()
+    if i % 5 == 0:
+        frames.append(frame)
+    unbatched_obs = unbatch_obs(obs, env.env.n_agents)
+    actions = np.vstack([model.predict(x)[0] for x in unbatched_obs])
+    obs, rewards, dones, info = env.step(actions)
+    done = dones[0]
+    R += rewards
+    i += 1
+env.close()
 print(f'R = {R}')
+
+import imageio
+from pygifsicle import optimize # type: ignore
+gif_fpath = 'tmp.gif'
+with imageio.get_writer(gif_fpath, mode='I') as writer:
+    for frame in frames:
+        writer.append_data(frame)
+optimize(gif_fpath)

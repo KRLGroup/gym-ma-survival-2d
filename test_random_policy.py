@@ -27,7 +27,7 @@ def main(render_mode: Optional[str], gif_fpath: Optional[str] = None,
             frame = env.render(mode=render_mode)
             if gif_fpath is not None and (i+1) % record_interval == 0:
                 frames.append(frame)
-        #print(f'observation = {observation["self"][0]}')
+        #print(f'observation = {observation}')
         #print(reward)
         if done:
             print(f'done after {i} steps')
