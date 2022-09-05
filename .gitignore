@@ -2,7 +2,6 @@ runs/
 models/
 untracked/
 stable_baselines3/
-exp_*.py
 .DS_Store
 
 # From https://github.com/github/gitignore/blob/main/Python.gitignore
