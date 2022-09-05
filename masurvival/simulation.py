@@ -324,7 +324,9 @@ class Cameras(Module):
                 # Add a small epsilon to ensure the laser scan hits.
                 end = body.position + (1+1e-6)*d
                 scan = laser_scan(group.world, body.position, end)
-                if scan[0].body == other: # type: ignore
+                if scan is None:
+                    pass
+                elif scan[0].body == other: # type: ignore
                     self.seen[-1].append(scan[0].body) # type: ignore
 
 

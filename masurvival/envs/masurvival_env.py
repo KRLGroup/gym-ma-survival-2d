@@ -13,9 +13,9 @@ from Box2D import ( # type: ignore
 import masurvival.simulation as sim
 from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
-    Health, Heal, Melee, Item, item_prototype, Inventory, AutoPickup, UseLast, 
-    DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, ObjectItem,
-    ImmunityPhase)
+    Health, Heal, ContinuousMelee, Item, item_prototype, Inventory, 
+    AutoPickup, UseLast, DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, 
+    ObjectItem, ImmunityPhase, Melee)
 
 Vec = Tuple[float, ...]
 # Self, lidars, other agents, inventory, items, objects
@@ -28,17 +28,127 @@ Reward = Vec
 
 Config = Dict[str, Dict[str, Any]]
 
-default_config: Config = {
+class BaseEnv(gym.Env):
+
+    # See the default values for available params for each subclass.
+    # It is expected that each subclass defines this at class level.
+    config: Dict[str, Any] = NotImplemented
+    # actions and observation spaces
+    action_space: spaces.Space # changes based on number of agents
+    observation_space: spaces.Space = NotImplemented
+    # rendering
+    metadata: Dict[str, Any] = {
+        'render_modes': ['human', 'rgb_array'], 'render_fps': 30}
+    window_size: int = 512 # only affects the first render call
+    canvas: Optional[Any] = None
+    # internal state
+    simulation: sim.Simulation
+    steps: int
+
+    @property
+    def n_agents(self):
+        n = self.config['agents'].get('n_spawns', None)
+        if n is None:
+            return self.config['agents']['n_agents']
+        return n
+
+    def __init__(self, config: Optional[Config] = None):
+        self.np_random = np.random.default_rng()
+        self.config = recursive_apply(lambda _: _, self.config)
+        if config is not None:
+            for k, subconfig in config.items():
+                self.config[k] |= subconfig
+        self.observation_space = self.compute_obs_space()
+        self.action_space = self.compute_action_space()
+
+    #TODO fix seed behaviour; for now it uses old interface so internal seed is not reset on reset, but only on init
+    def reset(self, seed: int = None, return_info: bool = False,
+              options: Optional[Dict[Any, Any]] = None) \
+            -> Union[Observation,
+                     Tuple[Observation, Dict[Any, Any]]]:
+        #if seed is None and 'seed' in self.config['rng']:
+        #    seed = self.config['rng']['seed']
+        #super().reset(seed=seed)
+        #super().reset()
+        self.spawner.rng = self.np_random
+        self.spawner.reset()
+        self.pre_reset()
+        self.simulation.reset()
+        obs = self.fetch_observations(self.simulation.groups['agents'])
+        info: Dict = {}
+        self.steps = 0
+        return (obs, info) if return_info else obs # type: ignore
+
+    def step(self, # type: ignore
+             actions: Action) -> Tuple[Observation, Reward, bool, Dict]:
+        actions = tuple(a for a in actions)
+        assert self.action_space.contains(actions), f"Invalid action {actions}."
+        agents = self.simulation.groups['agents']
+        self.queue_actions(agents, actions)
+        self.simulation.step()
+        obs = self.fetch_observations(agents)
+        rewards = self.compute_rewards(agents, **self.config['reward_scheme'])
+        done = self.is_done(agents)
+        info: Dict = {}
+        self.steps += 1
+        return obs, rewards, done, info # type: ignore
+
+    # Ignores the render mode after the first call. TODO change that
+    # Always returns the rendered frame, even with 'human' mode.
+    def render(self, mode: str = 'human') -> np.ndarray:
+        import masurvival.rendering as rendering
+        if mode not in self.metadata['render_modes']:
+            raise ValueError(f'Unsupported render mode: {mode}')
+        if self.canvas is None:
+            views = self.init_views()
+            self.canvas = rendering.Canvas(
+                width=self.window_size, height=self.window_size, 
+                world_size=self.config['spawn_grid']['floor_size'], 
+                render_mode=mode, fps=self.metadata['render_fps'],
+                background=rendering.background, views=views) # type: ignore
+        self.canvas.clear()
+        return self.canvas.render()
+
+    def close(self) -> None:
+        if self.canvas is not None:
+            self.canvas.close()
+
+    def pre_reset(self):
+        raise NotImplementedError
+
+    def fetch_observations(self, agents: sim.Group) -> Observation:
+        raise NotImplementedError
+
+    def queue_actions(self, agents: sim.Group, all_actions: Action):
+        raise NotImplementedError
+
+    def compute_rewards(
+            self, agents: sim.Group, sparse: bool) -> Tuple[float, ...]:
+        raise NotImplementedError
+
+    def is_done(self):
+        raise NotImplementedError
+
+    def init_views(self):
+        raise NotImplementedError
+
+
+# 2v2 variant, heals only
+
+twovstwo_heals_default_config: Config = {
     'reward_scheme': {
-        # if sparse, reward only at episode end (+1 win, -1 lose)
-        # if not sparse, -1 reward if dead, +1 if alive
-        'sparse': False,
+        'r_alive': 1,
+        'r_dead': -1,
+    },
+    'gameover' : {
+        'mode': 'alldead', # in {alldead, lastalive}
     },
     'rng': { 'seed': 42 },
     'spawn_grid': {
         'grid_size': 4,
         'floor_size': 20,
     },
+    # disabled in the actual env
     'immunity_phase': {
         'cooldown': 300,
     },
@@ -64,7 +174,8 @@ default_config: Config = {
     },
     'melee': {
         'range': 2,
-        'damage': 10,
+        'damage': 20,
+        'cooldown': 40, # makes sense as long as its greater than damage
         'drift': True, # so that we can actually render actions
     },
     'boxes': {
@@ -108,47 +219,12 @@ default_config: Config = {
     },
 }
 
+class TwoVsTwoHeals(BaseEnv):
 
-class MaSurvivalEnv(gym.Env):
+    config = twovstwo_heals_default_config
 
-    # Whether agents can see everything or only things their "cameras" see.
-    omniscent: bool
-
-    # See the default values for available params
-    config: Dict[str, Any] = default_config
-    # actions and observation spaces
-    agent_action_space: spaces.Space = spaces.MultiDiscrete([3,3,3,2,2,2])
-    action_space: spaces.Space # changes based on number of agents
-    observation_space: spaces.Space = NotImplemented
-    # rendering
-    metadata: Dict[str, Any] = {
-        'render_modes': ['human', 'rgb_array'], 'render_fps': 30}
-    window_size: int = 512 # only affects the first render call
-    canvas: Optional[Any] = None
-    # internal state
-    simulation: sim.Simulation
-    steps: int
-    spawner: SpawnGrid
-
-    @property
-    def n_agents(self):
-        n = self.config['agents'].get('n_spawns', None)
-        if n is None:
-            return self.config['agents']['n_agents']
-        return n
-
-    def __init__(
-            self, config: Optional[Config] = None, omniscent: bool = False):
-        self.np_random = np.random.default_rng()
-        self.omniscent = omniscent
-        self.config = recursive_apply(lambda _: _, self.config)
-        if config is not None:
-            for k, subconfig in config.items():
-                self.config[k] |= subconfig
-        self.observation_space = self._compute_obs_space()
-        n_agents = self.config['agents']['n_agents']
-        actions_spaces = (self.agent_action_space,)*n_agents # type: ignore
-        self.action_space = spaces.Tuple(actions_spaces)
+    def __init__(self, config=None):
+        super().__init__(config)
         spawn_grid_config = self.config['spawn_grid']
         room_size = spawn_grid_config['floor_size']
         agents_config = self.config['agents']
@@ -221,11 +297,11 @@ class MaSurvivalEnv(gym.Env):
         }
         self.simulation = sim.Simulation(groups=groups)
 
-    def _compute_obs_space(self):
+    def compute_obs_space(self):
         n_lasers = self.config['lidars']['n_lasers']
         n_heals = self.config['heals']['reset_spawns']['n_items']
         agent_size = 1+1+3+3 # ID, health, qpos, qvel
-        safe_zone_size = 3 # center & radius
+        safe_zone_size = 3+3 # center & radius + next center & radius
         item_size = 2 # pos
         R = dict(low=float('-inf'), high=float('inf'))
         space = spaces.Dict({
@@ -236,137 +312,15 @@ class MaSurvivalEnv(gym.Env):
         })
         return space
 
-#     def _compute_obs_space(self):
-#         n_lasers = self.config['lidars']['n_lasers']
-#         n_agents = self.n_agents
-#         n_boxes = self.config['boxes']['n_boxes']
-#         n_heals = self.config['heals']['reset_spawns']['n_items']
-#         n_walls = 4
-#         agent_size = 1+1+3+3
-#         safe_zone_size = 3
-#         item_size = 1+3
-#         object_size = 1+2+3
-#         inventory_item_size = 1
-#         inventory_slots = self.config['inventory']['slots']
-#         R = dict(low=float('-inf'), high=float('inf'))
-#         B = dict(low=0., high=1.)
-#         space = spaces.Tuple([
-#             spaces.Box(**R, shape=(n_agents, agent_size,)),
-#             spaces.Box(**R, shape=(n_agents, n_lasers,)),
-#             spaces.Box(**R, shape=(n_agents, safe_zone_size)),
-#             spaces.Tuple([
-#                 spaces.Tuple([
-#                     spaces.Box(**R, shape=(n_agents, n_agents-1, agent_size)),
-#                     spaces.Box(**B, shape=(n_agents, n_agents-1,)),
-#                 ]),
-#                 spaces.Tuple([
-#                     spaces.Box(**R, shape=(n_agents, inventory_slots, inventory_item_size)),
-#                     spaces.Box(**B, shape=(n_agents, inventory_slots,))
-#                 ]),
-#                 spaces.Tuple([
-#                     spaces.Box(**R, shape=(n_agents, n_heals+n_boxes, item_size)),
-#                     spaces.Box(**B, shape=(n_agents, n_heals+n_boxes,))
-#                 ]),
-#                 spaces.Tuple([
-#                     spaces.Box(**R, shape=(n_agents, n_walls+n_boxes, object_size)),
-#                     spaces.Box(**B, shape=(n_agents, n_walls+n_boxes,))
-#                 ]),
-#             ])
-#         ])
-#         return space, [agent_size, n_lasers, safe_zone_size, [agent_size, inventory_item_size, item_size, object_size]]
+    def compute_action_space(self):        
+        n_agents = self.config['agents']['n_agents']
+        single_action_space = spaces.MultiDiscrete([3,3,3,2,2,2])
+        actions_spaces = (single_action_space,)*n_agents # type: ignore
+        return spaces.Tuple(actions_spaces)
 
-    # if given, the seed takes precedence over the config seed
-    def reset(self, seed: int = None, return_info: bool = False,
-              options: Optional[Dict[Any, Any]] = None) \
-            -> Union[Observation,
-                     Tuple[Observation, Dict[Any, Any]]]:
-        #if seed is None and 'seed' in self.config['rng']:
-        #    seed = self.config['rng']['seed']
-        #super().reset(seed=seed)
-        #super().reset()
-        self.spawner.rng = self.np_random
-        self.spawner.reset()
+    def pre_reset(self):
         self.simulation.groups['agents'].get(SafeZone)[0].rng = self.np_random
-        self.simulation.reset()
         self.simulation.groups['agents'].get(DeathDrop)[0].rng = self.np_random
-        obs = self.fetch_observations(self.simulation.groups['agents'])
-        info: Dict = {}
-        self.steps = 0
-        return (obs, info) if return_info else obs # type: ignore
-
-    def step(self, # type: ignore
-             actions: Action) -> Tuple[Observation, Reward, bool, Dict]:
-        actions = tuple(a for a in actions)
-        assert self.action_space.contains(actions), f"Invalid action {actions}."
-        agents = self.simulation.groups['agents']
-        self.queue_actions(agents, actions)
-        self.simulation.step()
-        obs = self.fetch_observations(agents)
-        rewards = self.compute_rewards(agents, **self.config['reward_scheme'])
-        #done = agents.get(BattleRoyale)[0].over
-        done = all([b is None for b in agents.get(sim.IndexBodies)[0].bodies])
-        info: Dict = {}
-        self.steps += 1
-        return obs, rewards, done, info # type: ignore
-
-    # Ignores the render mode after the first call. TODO change that
-    # Always returns the rendered frame, even with 'human' mode.
-    def render(self, mode: str = 'human') -> np.ndarray:
-        import masurvival.rendering as rendering
-        if mode not in self.metadata['render_modes']:
-            raise ValueError(f'Unsupported render mode: {mode}')
-        if self.canvas is None:
-            views = {
-                self.simulation.groups['agents']: [
-                    rendering.SafeZone(
-                        **rendering.safe_zone_view_config), # type: ignore
-                    #rendering.ImmunityCooldown(
-                    #    **rendering.immunity_view_config), # type: ignore
-                    rendering.Bodies(
-                        **rendering.agent_bodies_view_config), # type: ignore
-                    rendering.BodyIndices(
-                        **rendering.body_indices_view_config), # type: ignore
-                    #rendering.Lidars(
-                    #    **rendering.agent_lidars_view_config), # type: ignore
-                    #rendering.Cameras(
-                    #    **rendering.cameras_view_config), # type: ignore
-                    rendering.Health(
-                        **rendering.health_view_config), # type: ignore
-                    rendering.Melee(
-                        **rendering.melee_view_config), # type: ignore
-                    #rendering.Inventory(
-                    #    **rendering.inventory_view_config), # type: ignore
-                    #rendering.GiveLast(
-                    #    **rendering.give_view_config), # type: ignore
-                ],
-                self.simulation.groups['boxes']: [
-                    rendering.Bodies(
-                        **rendering.bodies_view_config), # type: ignore
-                ],
-                self.simulation.groups['box_items']: [
-                    rendering.Bodies(
-                        **rendering.bodies_view_config), # type: ignore
-                ],
-                self.simulation.groups['heals']: [
-                    rendering.Bodies(
-                        **rendering.bodies_view_config), # type: ignore
-                ],
-                self.simulation.groups['walls']: [
-                    rendering.Bodies(
-                        **rendering.walls_view_config), # type: ignore
-                ],
-            }
-            self.canvas = rendering.Canvas(
-                width=self.window_size, height=self.window_size, 
-                world_size=self.config['spawn_grid']['floor_size'], 
-                render_mode=mode, fps=self.metadata['render_fps'],
-                background=rendering.background, views=views) # type: ignore
-        self.canvas.clear()
-        return self.canvas.render()
-
-    def close(self) -> None:
-        if self.canvas is not None:
-            self.canvas.close()
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
         agent_bodies = agents.get(sim.IndexBodies)[0].bodies
@@ -374,9 +328,18 @@ class MaSurvivalEnv(gym.Env):
         safe_zone = agents.get(SafeZone)[0]
         x = {}
         x['agent'] = self._fetch_self_observations(agent_bodies, health)
+        next_zone = None
+        if safe_zone.phase < safe_zone.phases-1:
+            next_zone = [
+                *safe_zone.centers[safe_zone.phase+1],
+                safe_zone.radiuses[safe_zone.phase+1],
+            ]
+        else:
+            next_zone = [0, 0, 0]
         x_zone = np_floats([
             *safe_zone.zone[1].position,
-            safe_zone.zone[0].radius
+            safe_zone.zone[0].radius,
+            *next_zone,
         ])
         assert self.n_agents == 2
         x['other'] = np.vstack([x['agent'][1], x['agent'][0]])
@@ -406,92 +369,6 @@ class MaSurvivalEnv(gym.Env):
             ])
         return x
 
-#     def fetch_observations(self, agents: sim.Group) -> Observation:
-#         bodies = agents.get(sim.IndexBodies)[0].bodies
-#         lidars = agents.get(sim.Lidars)[0]
-#         inventories = agents.get(Inventory)[0]
-#         health = agents.get(Health)[0]
-#         safe_zone = agents.get(SafeZone)[0]
-#         # Reverse lists so we can pop from the end to get observations in 
-#         # order of agent body index.
-#         if not self.omniscent:
-#             seens = agents.get(sim.Cameras)[0].seen
-#         else:
-#             everything = []
-#             for g in self.simulation.groups.values():
-#                 everything += g.bodies
-#             seens = [list(everything) for _ in range(self.n_agents)]
-#             for i, agent_body in enumerate(bodies):
-#                 seens[i].remove(agent_body)
-#         seens = list(reversed(seens))
-#         scans = list(reversed(lidars.scans))
-#         obs_dead = lambda i: (
-#             (i,0,0,0,0,0,0,0), [lidars.depth]*lidars.n_lasers, (0,0,0), [], [], [], [])
-#         safe_zone_obs = (*safe_zone.zone[1].position, safe_zone.zone[0].radius)
-#         obss = []
-#         for agent_id, body in enumerate(bodies):
-#             if body is None:
-#                 obss.append(obs_dead(agent_id))
-#                 continue
-#             self_: Vec = (
-#                 agent_id, health.healths[body], *body.position, body.angle, *body.linearVelocity, 
-#                 body.angularVelocity)
-#             depths = [lidars.depth if scan is None else scan[1]
-#                       for scan in  scans.pop()]
-#             seen = seens.pop()
-#             inventory_items = inventories.inventories[body]
-#             inventory = []
-#             for item in inventory_items:
-#                 type_ = 0 if isinstance(item, Heal) else 1
-#                 item_obs: Vec = (float(type_),)
-#                 inventory.append(item_obs)
-#             others = []
-#             items = []
-#             objects = []
-#             for b in seen:
-#                 group = sim.Group.body_group(b)
-#                 qpos: Vec = (*b.position, b.angle)
-#                 # Object types: 0 boxes, 1 walls
-#                 # Item types: 0 heals, 1 broken boxes
-#                 if group is self.simulation.groups['agents']:
-#                     other_agent_id = [c == b for i, c in enumerate(bodies)][0]
-#                     qvel: Vec = (*b.linearVelocity, b.angularVelocity)
-#                     others.append((other_agent_id, health.healths.get(b, 0), *qpos, *qvel))
-#                 elif group is self.simulation.groups['boxes']:
-#                     type_ = 0
-#                     assert isinstance(b.fixtures[0].shape, b2PolygonShape)
-#                     try:
-#                         size = sim.rect_dimensions(b.fixtures[0].shape)
-#                     except AssertionError:
-#                         print(b.fixtures[0].shape.vertices)
-#                         raise
-#                     objects.append((*qpos, float(type_), *size))
-#                 elif group is self.simulation.groups['box_items']:
-#                     type_ = 1
-#                     items.append((*qpos, float(type_)))
-#                 elif group is self.simulation.groups['heals']:
-#                     type_ = 0
-#                     items.append((*qpos, float(type_)))
-#                 elif group is self.simulation.groups['walls']:
-#                     type_ = 1
-#                     size = sim.rect_dimensions(b.fixtures[0].shape)
-#                     objects.append((*qpos, float(type_), *size))
-#                 else:
-#                     assert False, 'How did we get here?'
-#             obss.append((self_, depths, safe_zone_obs, others, inventory, items, objects))
-# 
-#         obss_np = _zero_element(self.observation_space)
-#         for i in [0,1,2]:
-#             obss_np[i] = np.array([obs[i] for obs in obss], dtype=np.float32)
-#         ent_offset = 3
-#         for i in range(4):
-#             for j, obs in enumerate(obss):
-#                 if len(obs[i+ent_offset]) > 0:
-#                     obss_np[ent_offset][i][0][j,:len(obs[i+ent_offset])] = np.array(obs[i+ent_offset], dtype=np.float32)
-#                     obss_np[ent_offset][i][1][j,:len(obs[i+ent_offset])] = 1
-#         #assert self.observation_space.contains(obss_np)
-#         return obss_np
-
     def queue_actions(self, agents: sim.Group, all_actions: Action):
         d = [-1., 0., 1.]
         bodies = agents.get(sim.IndexBodies)[0].bodies
@@ -509,11 +386,15 @@ class MaSurvivalEnv(gym.Env):
         #agents.get(GiveLast)[0].give = [bool(a[4]) for a in actions]
 
     def compute_rewards(
-            self, agents: sim.Group, sparse: bool) -> Tuple[float, ...]:
+            self, agents: sim.Group,
+            r_alive: float,
+            r_dead: float
+    ) -> Tuple[float, ...]:
         bodies = agents.get(sim.IndexBodies)[0].bodies
         rewards = np.zeros(self.n_agents, dtype=np.float32)
-        if not sparse:
-            rewards += np.array([-1 if body is None else +1 for body in bodies])
+        rewards += np.array([
+            r_dead if body is None else r_alive for body in bodies
+        ])
 #         game = agents.get(BattleRoyale)[0]
 #         if game.over:
 #             agent_health = self.config['health']['health']
@@ -523,6 +404,76 @@ class MaSurvivalEnv(gym.Env):
 #             prize = 1. if sparse else (max_prize - self.steps) / max_prize
 #             rewards += np.array([prize if won else -prize for won in game.results])
         return rewards
+
+    def is_done(self, agents):
+        #done = agents.get(BattleRoyale)[0].over
+        done = False
+        n_alive = len([
+            b for b in agents.get(sim.IndexBodies)[0].bodies
+            if b is not None
+        ])
+        if self.config['gameover']['mode'] == 'alldead':
+            done = n_alive == 0
+        elif self.config['gameover']['mode'] == 'lastalive':
+            done = n_alive == 1
+        else:
+            assert False, 'Invalid gameover mode'
+        #agent_health = self.config['health']['health']
+        #n_heals = self.config['heals']['reset_spawns']['n_spawns']
+        #healing = self.config['heals']['heal']['healing']
+        #max_steps = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
+        #print(f'max_steps = {max_steps}')
+        #done = self.steps >= max_steps
+        if done:
+            print(f'done in {self.steps} steps')
+        return done
+
+    def init_views(self):
+        import masurvival.rendering as rendering
+        views = {
+            self.simulation.groups['agents']: [
+                rendering.SafeZone(
+                    **rendering.safe_zone_view_config), # type: ignore
+                #rendering.ImmunityCooldown(
+                #    **rendering.immunity_view_config), # type: ignore
+                rendering.Bodies(
+                    **rendering.agent_bodies_view_config), # type: ignore
+                rendering.BodyIndices(
+                    **rendering.body_indices_view_config), # type: ignore
+                #rendering.Lidars(
+                #    **rendering.agent_lidars_view_config), # type: ignore
+                #rendering.Cameras(
+                #    **rendering.cameras_view_config), # type: ignore
+                rendering.Health(
+                    **rendering.health_view_config), # type: ignore
+                rendering.Melee(
+                    **rendering.melee_view_config), # type: ignore
+                #rendering.Inventory(
+                #    **rendering.inventory_view_config), # type: ignore
+                #rendering.GiveLast(
+                #    **rendering.give_view_config), # type: ignore
+            ],
+            self.simulation.groups['boxes']: [
+                rendering.Bodies(
+                    **rendering.bodies_view_config), # type: ignore
+            ],
+            self.simulation.groups['box_items']: [
+                rendering.Bodies(
+                    **rendering.bodies_view_config), # type: ignore
+            ],
+            self.simulation.groups['heals']: [
+                rendering.Bodies(
+                    **rendering.bodies_view_config), # type: ignore
+            ],
+            self.simulation.groups['walls']: [
+                rendering.Bodies(
+                    **rendering.walls_view_config), # type: ignore
+            ],
+        }
+        return views
+
+
+
 
 
 # only supports tuple and box spaces for now; returns lists instead of tuples to support mutability

@@ -357,8 +357,7 @@ class Health(sim.Module):
 
 # gives an short-range attack that damages the target (if it has an health 
 # module)
-#TODO also give cooldown?
-class Melee(sim.Module):
+class ContinuousMelee(sim.Module):
 
     range: float
     damage: int
@@ -391,6 +390,63 @@ class Melee(sim.Module):
                 self._attack(target, self.damage)
         if not self.drift:
             self.attacks = []
+
+    def _attack(self, target: b2Body, damage: int):
+        healths = sim.Group.body_group(target).get(Health)
+        for health in healths:
+            health.damage(target, damage) # type: ignore
+
+# gives a "strong" short-range attack with cooldown that damages the target (if it has an health module)
+class Melee(sim.Module):
+
+    range: float
+    damage: int
+    cooldown: int
+    drift: bool
+    #TODO init these in the post reset
+    targets: List[Optional[b2Body]] = []
+    origins: List[b2Vec2] = []
+    endpoints: List[b2Vec2] = []
+    attacks: List[bool] = []
+
+    def __init__(
+        self, range: float, damage: int, cooldown: int, drift: bool = False
+    ):
+        self.range = range
+        self.damage = damage
+        self.cooldown = cooldown
+        self.drift = drift
+
+    def post_reset(self, group: sim.Group):
+        self.cooldowns = {}
+
+    def pre_step(self, group: sim.Group):
+        self.origins = [body.position for body in group.bodies]
+        hands = [sim.from_polar(length=self.range, angle=body.angle)
+                 for body in group.bodies]
+        self.endpoints = [a + d for a, d in zip(self.origins, hands)]
+        scans = [sim.laser_scan(group.world, a, b)
+                 for a, b in zip(self.origins, self.endpoints)]
+        self.targets = [scan and scan[0].body for scan in scans]
+        missing = len(group.bodies) - len(self.attacks)
+        if missing > 0:
+            self.attacks += [False]*missing
+        for body, target, attack \
+        in zip(group.bodies, self.targets, self.attacks):
+            on_cooldown = body in self.cooldowns
+            if target is not None and attack and not on_cooldown:
+                self._attack(target, self.damage)
+                self.cooldowns[body] = self.cooldown
+        if not self.drift:
+            self.attacks = []
+        # unmark bodies that have fully cooled down
+        cooleddown = set()
+        for k in self.cooldowns.keys():
+            self.cooldowns[k] -= 1
+            assert self.cooldowns[k] >= 0
+            if self.cooldowns[k] == 0:
+                cooleddown.add(k)
+        [self.cooldowns.pop(k) for k in cooleddown]
 
     def _attack(self, target: b2Body, damage: int):
         healths = sim.Group.body_group(target).get(Health)

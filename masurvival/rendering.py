@@ -59,9 +59,18 @@ health_view_config = {
     'layer': 1,
 }
 
+continous_melee_view_config = {
+    'on': Color('indianred2'),
+    'off': Color('gray'),
+    'fill': Color('indianred2'),
+    'outline': Color('indianred2'),
+    'layer': 1,
+}
+
 melee_view_config = {
     'on': Color('indianred2'),
     'off': Color('gray'),
+    'cooldown': Color('purple'),
     'fill': Color('indianred2'),
     'outline': Color('indianred2'),
     'layer': 1,
@@ -461,7 +470,7 @@ class Health(View):
         canvas.draw_polygon(
             healthbar.vertices, offset, self.fill, self.outline, self.layer)
 
-class Melee(View):
+class ContinuousMelee(View):
     
     on: Optional[Color]
     off: Optional[Color]
@@ -480,7 +489,7 @@ class Melee(View):
         self.layer = layer
     
     def draw(self, canvas: Canvas, group: sim.Group):
-        for m in group.get(sem.Melee):
+        for m in group.get(sem.ContinuousMelee):
             for a, b, attack, target \
             in zip(m.origins, m.endpoints, m.attacks, m.targets):
                 self._draw_melee(a, b, attack, target, canvas)
@@ -492,6 +501,47 @@ class Melee(View):
         if color is not None:
             canvas.draw_segment(a, b, color, self.layer)
         if target is None or not attack:
+            return
+        canvas.draw_body(target, self.fill, self.outline, self.layer)
+
+
+class Melee(View):
+    
+    on: Optional[Color]
+    off: Optional[Color]
+    cooldown: Optional[Color]
+    fill: Optional[Color]
+    outline: Optional[Color]
+    layer: int
+    
+    def __init__(
+            self, on: Optional[Color] = None, off: Optional[Color] = None,
+            cooldown: Optional[Color] = None, 
+            fill: Optional[Color] = None, outline: Optional[Color] = None, 
+            layer: int = 0):
+        self.on = on
+        self.off = off
+        self.cooldown = cooldown
+        self.fill = fill
+        self.outline = outline
+        self.layer = layer
+    
+    def draw(self, canvas: Canvas, group: sim.Group):
+        for m in group.get(sem.Melee):
+            cooldown_flags = [b in m.cooldowns for b in group.bodies]
+            for a, b, attack, target, cooldown_flag \
+            in zip(m.origins, m.endpoints, m.attacks, m.targets, cooldown_flags):
+                self._draw_melee(a, b, attack, target, cooldown_flag, canvas)
+
+    def _draw_melee(
+            self, a: b2Vec2, b: b2Vec2, attack: bool,
+            target: Optional[b2Body], cooldown_flag: bool, canvas: Canvas):
+        color = self.on if attack else self.off
+        if cooldown_flag:
+            color = self.cooldown
+        if color is not None:
+            canvas.draw_segment(a, b, color, self.layer)
+        if target is None or not attack or cooldown_flag:
             return
         canvas.draw_body(target, self.fill, self.outline, self.layer)
 
