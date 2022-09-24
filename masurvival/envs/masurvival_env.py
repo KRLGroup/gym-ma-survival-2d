@@ -133,9 +133,12 @@ class BaseEnv(gym.Env):
         raise NotImplementedError
 
 
-# 2v2 variant, heals only
+# 1v1 variant, heals only
 
-twovstwo_heals_default_config: Config = {
+onevsone_heals_default_config: Config = {
+    'observation': {
+        'omniscent': True,
+    },
     'reward_scheme': {
         'r_alive': 1,
         'r_dead': -1,
@@ -219,9 +222,9 @@ twovstwo_heals_default_config: Config = {
     },
 }
 
-class TwoVsTwoHeals(BaseEnv):
+class OneVsOneHeals(BaseEnv):
 
-    config = twovstwo_heals_default_config
+    config = onevsone_heals_default_config
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -249,7 +252,7 @@ class TwoVsTwoHeals(BaseEnv):
             #sim.LogDeaths(), # this must come before IndexBodies to work
             sim.IndexBodies(),
             sim.Cameras(**cameras_config),
-            sim.Lidars(**lidar_config),
+            #sim.Lidars(**lidar_config),
             sim.DynamicMotors(**motor_config),
             DeathDrop(**death_drop_config), # needs to be before inventory
             Inventory(**inventory_config),
@@ -286,6 +289,7 @@ class TwoVsTwoHeals(BaseEnv):
         heals_spawn_config['n_spawns'] = heals_spawn_config.pop('n_items')
         heals_modules = [
             ResetSpawns(spawner=self.spawner, **heals_spawn_config),
+            sim.IndexBodies(),
             Heal(**heals_heal_config),]
             #Item(),]
         groups = {
@@ -304,11 +308,27 @@ class TwoVsTwoHeals(BaseEnv):
         safe_zone_size = 3+3 # center & radius + next center & radius
         item_size = 2 # pos
         R = dict(low=float('-inf'), high=float('inf'))
+        mask_spaces = {}
+        if not self.config['observation']['omniscent']:
+            # The masks have 0 for visible entities and 1 otherwise. This is to allow easy conversion to the pytorch multihead attention masks, which require True for unattendable positions.
+            mask_spaces = {
+                'heals_mask': spaces.Box(**R, shape=(
+                    self.n_agents, n_heals)
+                ),
+                'zone_mask': spaces.Box(**R, shape=(self.n_agents, 1)),
+            }
+        zone_shape = \
+            (self.n_agents, safe_zone_size) \
+            if self.config['observation']['omniscent'] \
+            else (self.n_agents, 1, safe_zone_size)
         space = spaces.Dict({
             'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'other': spaces.Box(**R, shape=(self.n_agents, agent_size)),
-            'zone': spaces.Box(**R, shape=(self.n_agents, safe_zone_size)),
-            'heals': spaces.Box(**R, shape=(self.n_agents, n_heals, item_size)),
+            'zone': spaces.Box(**R, shape=zone_shape),
+            'heals': spaces.Box(**R, shape=(
+                self.n_agents, n_heals, item_size)
+            ),
+            **mask_spaces,
         })
         return space
 
@@ -344,11 +364,21 @@ class TwoVsTwoHeals(BaseEnv):
         assert self.n_agents == 2
         x['other'] = np.vstack([x['agent'][1], x['agent'][0]])
         x['zone'] = np.tile(x_zone, [self.n_agents, 1])
-        x_heals = np_float_zeros(self.observation_space['heals'].shape[1:])
+        if not self.config['observation']['omniscent']:
+            x['zone'] = np.expand_dims(x['zone'], axis=1)
+            x['zone_mask'] = np_float_zeros(
+                self.observation_space['zone_mask'].shape
+            )
+        x_heals = np_float_zeros(
+            self.observation_space['heals'].shape[1:]
+        )
         for i, heal in enumerate(self.simulation.groups['heals'].bodies):
             x_heals[i] = np_floats([*heal.position])
         x['heals'] = np.tile(x_heals, [self.n_agents, 1, 1])
-        #TODO visibility mask
+        if not self.config['observation']['omniscent']:
+            x['heals_mask'] = self._fetch_heals_mask(
+                agents, agent_bodies
+            )
         assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
         return x
 
@@ -356,18 +386,29 @@ class TwoVsTwoHeals(BaseEnv):
         x = np_float_zeros(self.observation_space['agent'].shape)
         for i, agent_body in enumerate(agent_bodies):
             if agent_body is None:
+                #TODO does it make sense to give the agent a very far away position?
                 x[i][0] = i
                 continue
             x[i] = np_floats([
                 i,
                 health.healths[agent_body],
-                #TODO does it make sense to give the agent a very far away position?
                 *agent_body.position,
                 agent_body.angle,
                 *agent_body.linearVelocity,
                 agent_body.angularVelocity
             ])
         return x
+
+    def _fetch_heals_mask(self, agents: sim.Group, agent_bodies):
+        masks = np_float_ones(self.observation_space['heals_mask'].shape)
+        cameras = agents.get(sim.Cameras)[0]
+        heals = self.simulation.groups['heals'].get(sim.IndexBodies)[0].bodies
+        for a_body, seen in zip(agents.bodies, cameras.seen):
+            agent_id = agent_bodies.index(a_body)
+            masks[agent_id] = np_floats([
+                0 if h in seen else 1 for h in heals
+            ])
+        return masks
 
     def queue_actions(self, agents: sim.Group, all_actions: Action):
         d = [-1., 0., 1.]
@@ -505,4 +546,7 @@ def np_floats(a):
 
 def np_float_zeros(shape):
     return np.zeros(shape, dtype=np.float32)
+
+def np_float_ones(shape):
+    return np.ones(shape, dtype=np.float32)
 

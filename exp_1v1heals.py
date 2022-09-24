@@ -28,7 +28,7 @@ def main():
     import sys
     #TODO use os.path
     model_dir = './models/'
-    exp_name = '2v2heals'
+    exp_name = '1v1heals'
     model_name = model_dir + exp_name + '/model'
     env = make_env()
     if len(sys.argv) == 1:

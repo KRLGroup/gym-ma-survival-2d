@@ -1,5 +1,3 @@
-# NOTE: this code and related results rely on a prev version of the env TwoVsTwoHeals, in which the melee was continuous
-
 from typing import Optional, List
 import time
 import os
@@ -24,12 +22,42 @@ from policy_optimization.sb3_models import MhSaExtractor
 from policy_optimization.sb3_log_multirewards import LogMultiRewards
 
 
+env_config = {
+    'spawn_grid': {
+        'grid_size': 10,
+        'floor_size': 40,
+    },
+    'safe_zone': {
+        'phases': 8,
+        'cooldown': 200,
+        'damage': 1,
+        'radiuses': [20, 15, 10, 8, 4, 2, 1],
+        'centers': 'random',
+    },
+    'melee': {
+        'range': 2,
+        'damage': 35,
+        'cooldown': 40, # makes sense as long as its greater than damage
+        'drift': True,
+    },
+    'heals': {
+        'reset_spawns': {
+            'n_items': 30,
+            'item_size': 0.5,
+        },
+        'heal': {
+            'healing': 70,
+        },
+    }
+}
+
+
 def main():
     import sys
-    model_dir = './models/'
-    exp_name = '2v2heals_2'
-    model_name = model_dir + exp_name + '/model'
     #TODO use os.path
+    model_dir = './models/'
+    exp_name = '1v1heals_plus'
+    model_name = model_dir + exp_name + '/model'
     env = make_env()
     if len(sys.argv) == 1:
         print('error: expected subcommand from: train, eval, test_interactive, test_random')
@@ -52,52 +80,8 @@ def main():
 
 # build the env variant
 
-config = {
-    'reward_scheme': {
-        'r_alive': 1,
-        'r_dead': 0,
-    },
-    'gameover' : {
-        'mode': 'alldead', # in {alldead, lastalive}
-    },
-    'rng': { 'seed': 42 },
-    'spawn_grid': {
-        'grid_size': 8,
-        'floor_size': 25,
-    },
-    'agents': {
-        'n_agents': 2,
-        'agent_size': 1,
-    },
-    'health': {
-        'health': 100,
-    },
-    'melee': {
-        'range': 2,
-        'damage': 35,
-        'cooldown': 40, # makes sense as long as its greater than damage
-        'drift': True, # so that we can actually render actions
-    },
-    'heals': {
-        'reset_spawns': {
-            'n_items': 15,
-            'item_size': 0.5,
-        },
-        'heal': {
-            'healing': 75,
-        },
-    },
-    'safe_zone': {
-        'phases': 8,
-        'cooldown': 100,
-        'damage': 1,
-        'radiuses': [12.5, 10, 7.5, 5, 4, 2, 1],
-        'centers': 'random',
-    },
-}
-
 def make_env():
-    return TwoVsTwoHeals(config=config)
+    return TwoVsTwoHeals(config=env_config)
 
 
 # train models
@@ -122,7 +106,7 @@ def main_train(env, model_dir, exp_name, model_name):
             tensorboard_log='runs',
             n_steps=2048*8,
             batch_size=64*8,
-            n_epochs=50*8,
+            n_epochs=20,
             target_kl=0.01,
         )
     
@@ -177,7 +161,7 @@ def main_eval(env, model_dir, exp_name, model_name):
     
     import imageio
     from pygifsicle import optimize # type: ignore
-    gif_fpath = model_dir + 'eval.gif'
+    gif_fpath = model_dir + exp_name + '/eval.gif'
     with imageio.get_writer(gif_fpath, mode='I') as writer:
         for frame in frames:
             writer.append_data(frame)
@@ -318,7 +302,7 @@ def test_random_policy(
             break
             obs = env.reset()
     end = time.time()
-    print(f'avg step time: {(end - start)/i}')
+    print(f'avg step time: {(end - start)/1000.}')
     print(f'done')
     env.close()
     if gif_fpath is not None:
@@ -360,14 +344,12 @@ if __name__ == '__main__':
 
 # TODO:
 # - [v] make melees discrete with cooldown
+# - [v] make map and zones bigger, add more heal items
 # - [x] move other agent obs to entities obs
 # - [x] add obs for next safe zone
 # - [x] use LSTMs
 # - [x] add boxes of randomized shape? maybe not
 
-# possible ideas:
-# - make episodes longer and the map and zones bigger
-# - give agents the obs on the next safe zone
-
 # Tensorboard runs:
-# PPO_106, PPO_108, PPO_109, PPO_110, PPO_111
+# start: PPO_102
+

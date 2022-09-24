@@ -262,7 +262,10 @@ class IndexBodies(Module):
 
     def pre_despawn(self, bodies: List[b2Body]):
         for body in bodies:
-            self.bodies[self.bodies.index(body)] = None
+            # The if is needed to avoid double-despawn errors.
+            #TODO optimize this by eliminating double-despawns (e.g. 2 agents pickup the same item in the same time step)
+            if body in self.bodies:
+                self.bodies[self.bodies.index(body)] = None
 
 # prints a death message when bodies despawn from the group, using body 
 # indices if available; mostly useful for debugging
