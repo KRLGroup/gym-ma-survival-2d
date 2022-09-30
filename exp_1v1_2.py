@@ -103,15 +103,14 @@ config = {
         },
     },
     'boxes': {
-        'n_boxes': 5,
-        #TODO implement random shapes instead
-        'box_size': 1,
-    },
-    'boxes_item': {
-        'item_size': 0.5,
-        'offset': 0.75,
-    },
-    'boxes_health': {
+        'reset_spawns': {
+            'n_boxes': 5,
+            'box_size': 1,
+        },
+        'item': {
+            'item_size': 0.5,
+            'offset': 0.75,
+        },
         'health': 20,
     },
 }
