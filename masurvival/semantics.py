@@ -123,33 +123,40 @@ class RandomizeBoxShapes(sim.Module):
 # items and inventories
 
 # marks bodies in its group as items (they are immaterial and can interact 
-# with inventories). Note that the meaning of the use and drop methods are 
-# "use or drop an item of this type"; there is no item-instance-specific 
-# information in them.
+# with inventories).
 class Item(sim.Module):
 
     # can be accessed by subclasses
     group: sim.Group
     # should be set by subclasses
     prototype: sim.Prototype
+    # for use in subclasses, stores data specific to items with a body; by 
+    # default, it stores None for each body
+    data: Dict[b2Body, Any]
     
     # this should be overridden by subclasses
-    def use(self, user: b2Body):
+    def use(self, user: b2Body, data: Any):
         pass
 
     # can be used to "drop" (i.e. spawn) an item of this type with the given 
-    # placement; can also be overridden by subclasses if needed
-    def drop(self, placement: sim.Placement):
+    # placement and data; can also be overridden by subclasses if needed
+    def drop(self, placement: sim.Placement, data: Any):
         self.group.spawn([self.prototype], [placement])
+        # NOTE: this relies on the fact that no other body can spawn in
+        # between the above call to Group.spawn and this line, so that the 
+        # last spawned body will be the spawned item.
+        self.data[self.group.bodies[-1]] = data
 
     def post_reset(self, group: sim.Group):
         # keep a ref to the group so that items can be dropped
         self.group = group
+        self.data = {}
 
     def post_spawn(self, bodies: List[b2Body]):
         for body in bodies:
             for fixture in body.fixtures:
                 fixture.sensor = True
+            self.data[body] = None
 
 # adds a list inventory with a fixed number of slots to the bodies in its 
 # group; no other functionality is added, but the pickup, use, drop and 
@@ -157,7 +164,7 @@ class Item(sim.Module):
 class Inventory(sim.Module):
 
     slots: int
-    inventories: Dict[b2Body, List[Item]]
+    inventories: Dict[b2Body, List[Tuple[Item, Any]]]
 
     def __init__(self, slots: int):
         self.slots = slots
@@ -166,18 +173,20 @@ class Inventory(sim.Module):
         return len(self.inventories[body])
 
     # returns False when inventory did not have enough empty slots
-    def take(self, body: b2Body, items: List[Item]) -> bool:
+    def take(self, body: b2Body, items: List[Item], data: List) -> bool:
+        assert len(items) == len(data)
         inventory = self.inventories[body]
         if len(items) <= 0:
             return False
         if len(items) + len(inventory) > self.slots:
             return False
-        inventory += items # type: ignore
+        inventory += list(zip(items, data)) # type: ignore
         return True
 
     def pickup(self, body: b2Body, item: b2Body):
         items = sim.Group.body_group(item).get(Item)
-        if self.take(body, items):
+        data = [m.data[item] for m in items]
+        if self.take(body, items, data):
             sim.Group.despawn_body(item)
 
     def give(self, src: b2Body, dest: b2Body, slot: int = -1):
@@ -185,29 +194,30 @@ class Inventory(sim.Module):
         if len(dest_inventories) == 0:
             return
         try:
-            item = self.inventories[src].pop(slot)
+            item, data = self.inventories[src].pop(slot)
         except IndexError:
             return
         for inventory in dest_inventories:
-            inventory.take(dest, [item])
+            inventory.take(dest, [item], [data])
 
     def use(self, user: b2Body, slot: int = -1):
         try:
-            item = self.inventories[user].pop(slot)
+            item, data = self.inventories[user].pop(slot)
         except IndexError:
             return
-        item.use(user)
+        item.use(user, data)
 
     def drop(
             self, body: b2Body, slot: int = -1,
-            offset: sim.Vec2 = b2Vec2(0,0)):
+            offset: sim.Vec2 = b2Vec2(0,0)
+        ):
         try:
-            item = self.inventories[body].pop(slot)
+            item, data = self.inventories[body].pop(slot)
         except IndexError:
             return
-        item.drop(body.position + offset)
+        item.drop(body.position + offset, data)
  
-    # more efficient alternative to drop to drop all items (inventory remains 
+    # more efficient alternative to dropping all items (inventory remains 
     # but empty)
     def drop_all(
             self, body: b2Body,
@@ -215,8 +225,8 @@ class Inventory(sim.Module):
         inventory = self.inventories[body]
         if not isinstance(offsets, list):
             offsets = [offsets]*len(inventory)
-        for item, offset in zip(inventory, offsets):
-            item.drop(body.position + offset)
+        for (item, data), offset in zip(inventory, offsets):
+            item.drop(body.position + offset, data)
         self.inventories[body] = []
 
     def post_spawn(self, bodies: List[b2Body]):
@@ -493,7 +503,7 @@ class Heal(Item):
         self.healing = healing
         self.prototype = prototype
 
-    def use(self, user: b2Body):
+    def use(self, user: b2Body, data: Any):
         healths = sim.Group.body_group(user).get(Health)
         for health in healths:
             health.heal(user, self.healing) # type: ignore
@@ -662,67 +672,53 @@ class SafeZone(sim.Module):
 
 # breakable/placeable objects
 
-# objects in the group will be items that spawn objects when used; the spawned 
-# object is controlled by setting the 'object_prototype'. The object will be 
-# spawned with the given offset in the direction of the user. 'placements' is 
-# used to queue places where items of this kind are to be spawned at the next 
-# pre step.
+# items that spawn objects when used; usually used in conjunction with an Object module that refers to it (usually in another group), see below
+# uses item data to store the prototype for the spawned object
 class ObjectItem(Item):
 
-    # should be set by Object's; the group and prototype used for placing 
-    # objects back in the world
-    object_group: sim.Group
-    object_prototype: sim.Prototype
     prototype: sim.Prototype
     offset: float
-    group: sim.Group
-    # adding to this list makes the group spawn items in that places at the 
-    # next pre step
-    placements: List[b2Vec2]
+    # this is automatically set by the Object module that uses this module; 
+    # rememeber there can be only 1 for now!
+    object_group: sim.Group
 
     def __init__(self, prototype: sim.Prototype, offset: float):
         self.prototype = prototype
         self.offset = offset
 
-    def post_reset(self, group: sim.Group):
-        self.group = group
-        self.placements = []
-
-    def pre_step(self, group: sim.Group):
-        group.spawn([self.prototype]*len(self.placements), self.placements)
-        self.placements = []
-
-    def use(self, user: b2Body):
+    def use(self, user: b2Body, data: Any):
+        assert isinstance(data, sim.Prototype)
         offset = sim.from_polar(self.offset, user.angle)
-        self.object_group.spawn([self.object_prototype],
-                         [user.position + offset])
+        self.object_group.spawn(
+            [data],
+            [user.position + offset]
+        )
 
 # things that, instead of completely despawning, drop as items when killed; 
 # the dropped item will then spawn back the original object
+# this requires an ObjectItem module in a group (usually different)
 class Object(sim.Module):
 
-    item: ObjectItem
-    placements: List[b2Vec2]
-    group: sim.Group
+    item_module: ObjectItem
+    next_spawns: List[Tuple] #TODO specify type better
 
-    def __init__(self, item: ObjectItem):
-        self.item = item
+    def __init__(self, item_module: ObjectItem):
+        self.item_module = item_module
 
     def post_reset(self, group: sim.Group):
-        self.group = group
-        self.placements = []
+        self.item_module.object_group = group
+        self.next_spawns = []
+
+    def pre_step(self, group: sim.Group):
+        for pos, proto in self.next_spawns:
+            self.item_module.drop(placement=pos, data=proto)
+        self.next_spawns = []
 
     def pre_despawn(self, bodies: List[b2Body]):
-        if len(bodies) == 0:
-            return
-        if not hasattr(self.item, 'object_group'):
-            self.item.object_group = self.group
-            self.item.object_prototype = sim.prototype(bodies[0])
-        self.placements += [body.position for body in bodies]
+        self.next_spawns += list(
+            [(body.position, sim.prototype(body)) for body in bodies]
+        )
 
-    def post_step(self, group: sim.Group):
-        self.item.placements += self.placements
-        self.placements = []
 
 
 # utilties

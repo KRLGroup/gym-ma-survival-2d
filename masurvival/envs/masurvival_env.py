@@ -325,9 +325,9 @@ class OneVsOne(BaseEnv):
         heals_spawn_config['prototype'] = heal_prototype
         heals_spawn_config['n_spawns'] = heals_spawn_config.pop('n_items')
         heals_modules = [
+            Heal(**heals_heal_config),
             ResetSpawns(spawner=self.spawner, **heals_spawn_config),
             sim.IndexBodies(),
-            Heal(**heals_heal_config),
             #Item(),
         ]
         groups = {

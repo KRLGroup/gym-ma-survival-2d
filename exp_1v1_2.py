@@ -258,8 +258,10 @@ def test_interactive(
     while not done:
         actions = env.action_space.sample()
         user_action, pressed = get_action_from_keyboard(pressed)
-        if env.n_agents >= 2:
+        if env.n_agents >= 3:
             actions = (user_action,) + (zero_action(),) + actions[2:]
+        elif env.n_agents == 2:
+            actions = (user_action,) + actions[1:]
         elif env.n_agents == 1:
             actions = (user_action,)
         action = actions
