@@ -59,7 +59,7 @@ health_view_config = {
     'layer': 1,
 }
 
-continous_melee_view_config = {
+continuous_melee_view_config = {
     'on': Color('indianred2'),
     'off': Color('gray'),
     'fill': Color('indianred2'),

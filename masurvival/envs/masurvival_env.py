@@ -15,7 +15,7 @@ from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
     Health, Heal, ContinuousMelee, Item, item_prototype, Inventory, 
     AutoPickup, UseLast, DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, 
-    ObjectItem, ImmunityPhase, Melee)
+    ObjectItem, ImmunityPhase, Melee, RandomizeBoxShapes)
 
 Vec = Tuple[float, ...]
 # Self, lidars, other agents, inventory, items, objects
@@ -44,13 +44,6 @@ class BaseEnv(gym.Env):
     # internal state
     simulation: sim.Simulation
     steps: int
-
-    @property
-    def n_agents(self):
-        n = self.config['agents'].get('n_spawns', None)
-        if n is None:
-            return self.config['agents']['n_agents']
-        return n
 
     def __init__(self, config: Optional[Config] = None):
         self.np_random = np.random.default_rng()
@@ -135,7 +128,7 @@ class BaseEnv(gym.Env):
 
 # 1v1 variant, heals only
 
-onevsone_heals_default_config: Config = {
+onevsone_heals_config: Config = {
     'observation': {
         'omniscent': True,
     },
@@ -178,18 +171,26 @@ onevsone_heals_default_config: Config = {
     'melee': {
         'range': 2,
         'damage': 20,
+        # If 'cooldown' is not given, the melee is continuous
         'cooldown': 40, # makes sense as long as its greater than damage
         'drift': True, # so that we can actually render actions
     },
     'boxes': {
-        'n_boxes': 0,
-        'box_size': 1,
-    },
-    'boxes_item': {
-        'item_size': 0.5,
-        'offset': 0.75,
-    },
-    'boxes_health': {
+        'reset_spawns': {
+            'n_boxes': 4,
+            'box_size': 1,
+        },
+        # if 'randomized_shape' is present, item_size above is ignored, and box shapes are randomized at each reset (it should contain params for RandomizeBoxShapes init)
+#         'randomized_shape': {
+#             'avg_w': ,
+#             'std_w': ,
+#             'avg_h': ,
+#             'std_h': ,
+#         },
+        'item': {
+            'item_size': 0.5,
+            'offset': 0.75,
+        },
         'health': 20,
     },
     'heals': {
@@ -222,12 +223,35 @@ onevsone_heals_default_config: Config = {
     },
 }
 
-class OneVsOneHeals(BaseEnv):
+# uses omniscent, heals-only config by default
+class OneVsOne(BaseEnv):
 
-    config = onevsone_heals_default_config
+    config = onevsone_heals_config
+
+    @property
+    def n_agents(self):
+        n = self.config['agents'].get('n_spawns', None)
+        if n is None:
+            n = self.config['agents']['n_agents']
+        return n
+
+    @property
+    def n_heals(self):
+        n = self.config['heals']['reset_spawns'].get('n_items')
+        if n is None:
+            n = self.config['heals']['reset_spawns']['n_spawns']
+        return n
+
+    @property
+    def n_boxes(self):
+        n = self.config['boxes']['reset_spawns'].get('n_boxes')
+        if n is None:
+            n = self.config['boxes']['reset_spawns']['n_spawns']
+        return n
 
     def __init__(self, config=None):
         super().__init__(config)
+        # Setup agent and global spawner.
         spawn_grid_config = self.config['spawn_grid']
         room_size = spawn_grid_config['floor_size']
         agents_config = self.config['agents']
@@ -240,6 +264,10 @@ class OneVsOneHeals(BaseEnv):
         motor_config = self.config['motors']
         health_config = self.config['health']
         melee_config = self.config['melee']
+        self.melee_class = Melee
+        if 'cooldown' not in config['melee']:
+            self.melee_class = ContinuousMelee
+            del self.config['melee']['cooldown']
         inventory_config = self.config['inventory']
         auto_pickup_config = self.config['auto_pickup']
         give_config = self.config['give']
@@ -262,23 +290,32 @@ class OneVsOneHeals(BaseEnv):
             GiveLast(**give_config),
             SafeZone(**safe_zone_config),
             #ImmunityPhase(**immunity_phase_config),
-            Melee(**melee_config), # needs to be after anything that kills bodies
+            self.melee_class(**melee_config), # needs to be after anything that kills bodies
             #BattleRoyale(),
-            ]
+        ]
+        # Setup boxes (objects and items).
         boxes_config = self.config['boxes']
-        boxes_item_config = self.config['boxes_item']
-        boxes_health_config = self.config['boxes_health']
-        box_size = boxes_config.pop('box_size')
-        boxes_config['prototype'] = box_prototype(box_size)
-        boxes_config['n_spawns'] = boxes_config.pop('n_boxes')
+        boxes_spawn_config = boxes_config['reset_spawns']
+        box_size = boxes_spawn_config.pop('box_size')
+        boxes_spawn_config['prototype'] = box_prototype(box_size)
+        boxes_spawn_config['n_spawns'] = boxes_spawn_config.pop('n_boxes')
+        boxes_item_config = boxes_config['item']
         boxes_item_size = boxes_item_config.pop('item_size')
         boxes_item_config['prototype'] = item_prototype(boxes_item_size)
         boxes_items = ObjectItem(**boxes_item_config)
         boxes_items_modules = [boxes_items]
         boxes_modules = [
-            ResetSpawns(spawner=self.spawner, **boxes_config),
+            ResetSpawns(spawner=self.spawner, **boxes_spawn_config),
             Object(boxes_items),
-            Health(**boxes_health_config),]
+            sim.IndexBodies(),
+            Health(health=boxes_config['health']),
+        ]
+        if 'randomized_shape' in boxes_config:
+            boxes_modules.insert(
+                0,
+                RandomizeBoxShapes(**boxes_config['randomized_shape']),
+            )
+        # Setup heals.
         heals_config = self.config['heals']
         heals_spawn_config = heals_config['reset_spawns']
         heals_heal_config = heals_config['heal']
@@ -290,8 +327,9 @@ class OneVsOneHeals(BaseEnv):
         heals_modules = [
             ResetSpawns(spawner=self.spawner, **heals_spawn_config),
             sim.IndexBodies(),
-            Heal(**heals_heal_config),]
-            #Item(),]
+            Heal(**heals_heal_config),
+            #Item(),
+        ]
         groups = {
             'boxes': sim.Group(boxes_modules),
             'box_items': sim.Group([boxes_items]),
@@ -303,34 +341,46 @@ class OneVsOneHeals(BaseEnv):
 
     def compute_obs_space(self):
         n_lasers = self.config['lidars']['n_lasers']
-        n_heals = self.config['heals']['reset_spawns']['n_items']
+        n_heals = self.n_heals
+        n_boxes = self.n_boxes
         agent_size = 1+1+3+3 # ID, health, qpos, qvel
         safe_zone_size = 3+3 # center & radius + next center & radius
         item_size = 2 # pos
+        box_size = 4*2+3 # 4 vertices, qpos
         R = dict(low=float('-inf'), high=float('inf'))
         mask_spaces = {}
         if not self.config['observation']['omniscent']:
             # The masks have 0 for visible entities and 1 otherwise. This is to allow easy conversion to the pytorch multihead attention masks, which require True for unattendable positions.
-            mask_spaces = {
-                'heals_mask': spaces.Box(**R, shape=(
-                    self.n_agents, n_heals)
-                ),
-                'zone_mask': spaces.Box(**R, shape=(self.n_agents, 1)),
-            }
+            mask_spaces['zone_mask'] = spaces.Box(
+                **R, shape=(self.n_agents, 1)
+            )
+            if n_heals > 0:
+                mask_spaces['heals_mask'] = spaces.Box(
+                    **R, shape=(self.n_agents, n_heals)
+                )
+            if n_boxes > 0:
+                mask_spaces['boxes_mask'] = spaces.Box(
+                    **R, shape=(self.n_agents, n_boxes)
+                )
         zone_shape = \
             (self.n_agents, safe_zone_size) \
             if self.config['observation']['omniscent'] \
             else (self.n_agents, 1, safe_zone_size)
-        space = spaces.Dict({
+        space_dict = {
             'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'other': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'zone': spaces.Box(**R, shape=zone_shape),
-            'heals': spaces.Box(**R, shape=(
-                self.n_agents, n_heals, item_size)
-            ),
             **mask_spaces,
-        })
-        return space
+        }
+        if n_heals > 0:
+            space_dict['heals'] = spaces.Box(**R, shape=(
+                self.n_agents, n_heals, item_size)
+            )
+        if n_boxes > 0:
+            space_dict['boxes'] = spaces.Box(**R, shape=(
+                self.n_agents, n_boxes, box_size)
+            )
+        return spaces.Dict(space_dict)
 
     def compute_action_space(self):        
         n_agents = self.config['agents']['n_agents']
@@ -340,13 +390,22 @@ class OneVsOneHeals(BaseEnv):
 
     def pre_reset(self):
         self.simulation.groups['agents'].get(SafeZone)[0].rng = self.np_random
-        self.simulation.groups['agents'].get(DeathDrop)[0].rng = self.np_random
+        self.simulation.groups['agents'].get(DeathDrop)[0].rng = \
+            self.np_random
+        if self.n_boxes > 0:
+            try:
+                m = self.simulation.groups['boxes'].get(RandomizeBoxShapes)[0]
+            except IndexError:
+                pass
+            else:
+                m.rng = self.np_random
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
         agent_bodies = agents.get(sim.IndexBodies)[0].bodies
         health = agents.get(Health)[0]
         safe_zone = agents.get(SafeZone)[0]
         x = {}
+        # Observe the agent.
         x['agent'] = self._fetch_self_observations(agent_bodies, health)
         next_zone = None
         if safe_zone.phase < safe_zone.phases-1:
@@ -362,23 +421,43 @@ class OneVsOneHeals(BaseEnv):
             *next_zone,
         ])
         assert self.n_agents == 2
+        # Observe the other agent.
         x['other'] = np.vstack([x['agent'][1], x['agent'][0]])
+        # Observe the current and next safe zones. 
         x['zone'] = np.tile(x_zone, [self.n_agents, 1])
         if not self.config['observation']['omniscent']:
             x['zone'] = np.expand_dims(x['zone'], axis=1)
             x['zone_mask'] = np_float_zeros(
                 self.observation_space['zone_mask'].shape
             )
-        x_heals = np_float_zeros(
-            self.observation_space['heals'].shape[1:]
-        )
-        for i, heal in enumerate(self.simulation.groups['heals'].bodies):
-            x_heals[i] = np_floats([*heal.position])
-        x['heals'] = np.tile(x_heals, [self.n_agents, 1, 1])
-        if not self.config['observation']['omniscent']:
-            x['heals_mask'] = self._fetch_heals_mask(
-                agents, agent_bodies
+        # Observe the heal items.
+        if self.n_heals > 0:
+            x_heals = np_float_zeros(
+                self.observation_space['heals'].shape[1:]
             )
+            for i, heal in enumerate(self.simulation.groups['heals'].bodies):
+                x_heals[i] = np_floats([*heal.position])
+            x['heals'] = np.tile(x_heals, [self.n_agents, 1, 1])
+            if not self.config['observation']['omniscent']:
+                x['heals_mask'] = self._fetch_heals_mask(
+                    agents, agent_bodies
+                )
+        # Observe boxes
+        if self.n_boxes > 0:
+            x_boxes = np_float_zeros(
+                self.observation_space['boxes'].shape[1:]
+            )
+            for i, box in enumerate(self.simulation.groups['boxes'].bodies):
+                vertices = []
+                for vertex in box.fixtures[0].shape.vertices:
+                    vertices.extend([*vertex])
+                x_boxes[i] = np_floats([*vertices, *box.position, box.angle])
+            x['boxes'] = np.tile(x_boxes, [self.n_agents, 1, 1])
+            if not self.config['observation']['omniscent']:
+                x['boxes_mask'] = self._fetch_boxes_mask(
+                    agents, agent_bodies
+                )
+        # Assert obs is valid and return it.
         assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
         return x
 
@@ -410,6 +489,17 @@ class OneVsOneHeals(BaseEnv):
             ])
         return masks
 
+    def _fetch_boxes_mask(self, agents: sim.Group, agent_bodies):
+        masks = np_float_ones(self.observation_space['boxes_mask'].shape)
+        cameras = agents.get(sim.Cameras)[0]
+        boxes = self.simulation.groups['boxes'].get(sim.IndexBodies)[0].bodies
+        for a_body, seen in zip(agents.bodies, cameras.seen):
+            agent_id = agent_bodies.index(a_body)
+            masks[agent_id] = np_floats([
+                0 if box in seen else 1 for box in boxes
+            ])
+        return masks
+
     def queue_actions(self, agents: sim.Group, all_actions: Action):
         d = [-1., 0., 1.]
         bodies = agents.get(sim.IndexBodies)[0].bodies
@@ -420,7 +510,7 @@ class OneVsOneHeals(BaseEnv):
                 actions.append(a)
         motor_controls = [(d[a[0]], d[a[1]], d[a[2]]) for a in actions]
         agents.get(sim.DynamicMotors)[0].controls = motor_controls
-        agents.get(Melee)[0].attacks = [bool(a[3]) for a in actions]
+        agents.get(self.melee_class)[0].attacks = [bool(a[3]) for a in actions]
         agents.get(UseLast)[0].uses = [bool(a[4]) for a in actions]
         agents.get(GiveLast)[0].give = [bool(a[5]) for a in actions]
         #agents.get(UseLast)[0].uses = [bool(a[3]) for a in actions]
@@ -436,14 +526,6 @@ class OneVsOneHeals(BaseEnv):
         rewards += np.array([
             r_dead if body is None else r_alive for body in bodies
         ])
-#         game = agents.get(BattleRoyale)[0]
-#         if game.over:
-#             agent_health = self.config['health']['health']
-#             n_heals = self.config['heals']['reset_spawns']['n_spawns']
-#             healing = self.config['heals']['heal']['healing']
-#             max_prize = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
-#             prize = 1. if sparse else (max_prize - self.steps) / max_prize
-#             rewards += np.array([prize if won else -prize for won in game.results])
         return rewards
 
     def is_done(self, agents):
@@ -459,12 +541,6 @@ class OneVsOneHeals(BaseEnv):
             done = n_alive == 1
         else:
             assert False, 'Invalid gameover mode'
-        #agent_health = self.config['health']['health']
-        #n_heals = self.config['heals']['reset_spawns']['n_spawns']
-        #healing = self.config['heals']['heal']['healing']
-        #max_steps = agents.get(SafeZone)[0].max_lifespan(agent_health + n_heals*healing)
-        #print(f'max_steps = {max_steps}')
-        #done = self.steps >= max_steps
         if done:
             print(f'done in {self.steps} steps')
         return done
@@ -487,8 +563,6 @@ class OneVsOneHeals(BaseEnv):
                 #    **rendering.cameras_view_config), # type: ignore
                 rendering.Health(
                     **rendering.health_view_config), # type: ignore
-                rendering.Melee(
-                    **rendering.melee_view_config), # type: ignore
                 #rendering.Inventory(
                 #    **rendering.inventory_view_config), # type: ignore
                 #rendering.GiveLast(
@@ -511,10 +585,17 @@ class OneVsOneHeals(BaseEnv):
                     **rendering.walls_view_config), # type: ignore
             ],
         }
+        if self.melee_class is Melee:
+            views[self.simulation.groups['agents']].append(
+                rendering.Melee(**rendering.melee_view_config)
+            )
+        else:
+            views[self.simulation.groups['agents']].append(
+                rendering.ContinuousMelee(
+                    **rendering.continuous_melee_view_config
+                )
+            )
         return views
-
-
-
 
 
 # only supports tuple and box spaces for now; returns lists instead of tuples to support mutability

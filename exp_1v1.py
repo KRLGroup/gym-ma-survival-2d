@@ -22,42 +22,12 @@ from policy_optimization.sb3_models import MhSaExtractor
 from policy_optimization.sb3_log_multirewards import LogMultiRewards
 
 
-env_config = {
-    'spawn_grid': {
-        'grid_size': 10,
-        'floor_size': 40,
-    },
-    'safe_zone': {
-        'phases': 8,
-        'cooldown': 200,
-        'damage': 1,
-        'radiuses': [20, 15, 10, 8, 4, 2, 1],
-        'centers': 'random',
-    },
-    'melee': {
-        'range': 2,
-        'damage': 35,
-        'cooldown': 40, # makes sense as long as its greater than damage
-        'drift': True,
-    },
-    'heals': {
-        'reset_spawns': {
-            'n_items': 30,
-            'item_size': 0.5,
-        },
-        'heal': {
-            'healing': 70,
-        },
-    }
-}
-
-
 def main():
     import sys
-    #TODO use os.path
     model_dir = './models/'
-    exp_name = '1v1heals_plus'
+    exp_name = '1v1'
     model_name = model_dir + exp_name + '/model'
+    #TODO use os.path
     env = make_env()
     if len(sys.argv) == 1:
         print('error: expected subcommand from: train, eval, test_interactive, test_random')
@@ -78,10 +48,73 @@ def main():
         print(f'error: unrecognized subcommand: {sys.argv[1]}')
 
 
+# for the policy model
+
+entity_keys = {'heals', 'boxes'}
+
+
 # build the env variant
 
+config = {
+    'observation': {
+        'omniscent': True,
+    },
+    'reward_scheme': {
+        'r_alive': 1,
+        'r_dead': 0,
+    },
+    'gameover' : {
+        'mode': 'alldead', # in {alldead, lastalive}
+    },
+    'rng': { 'seed': 42 },
+    'safe_zone': {
+        'phases': 8,
+        'cooldown': 100,
+        'damage': 1,
+        'radiuses': [12.5, 10, 7.5, 5, 4, 2, 1],
+        'centers': 'random',
+    },
+    'spawn_grid': {
+        'grid_size': 8,
+        'floor_size': 25,
+    },
+    'agents': {
+        'n_agents': 2,
+        'agent_size': 1,
+    },
+    'health': {
+        'health': 100,
+    },
+    'melee': {
+        'range': 2,
+        'damage': 5,
+        'drift': True, # so that we can actually render actions
+    },
+    'heals': {
+        'reset_spawns': {
+            'n_items': 15,
+            'item_size': 0.5,
+        },
+        'heal': {
+            'healing': 75,
+        },
+    },
+    'boxes': {
+        'n_boxes': 10,
+        #TODO implement random shapes instead
+        'box_size': 1,
+    },
+    'boxes_item': {
+        'item_size': 0.5,
+        'offset': 0.75,
+    },
+    'boxes_health': {
+        'health': 20,
+    },
+}
+
 def make_env():
-    return OneVsOne(config=env_config)
+    return OneVsOne(config=config)
 
 
 # train models
@@ -90,12 +123,13 @@ def main_train(env, model_dir, exp_name, model_name):
     try:
         model = PPO.load(model_name, env=env)
     except FileNotFoundError:
+        print('No model file found, creating new model.')
         n_heals = env.env.config['heals']['reset_spawns']['n_spawns']
-        entity_keys = {'heals'}
         policy_kwargs = dict(
             features_extractor_class=MhSaExtractor,
             features_extractor_kwargs=dict(
-                entity_keys=entity_keys
+                entity_keys=entity_keys,
+                omniscent=env.env.config['observation']['omniscent'],
             )
         )
         model = PPO(
@@ -106,7 +140,7 @@ def main_train(env, model_dir, exp_name, model_name):
             tensorboard_log='runs',
             n_steps=2048*8,
             batch_size=64*8,
-            n_epochs=20,
+            n_epochs=50*8,
             target_kl=0.01,
         )
     
@@ -161,7 +195,7 @@ def main_eval(env, model_dir, exp_name, model_name):
     
     import imageio
     from pygifsicle import optimize # type: ignore
-    gif_fpath = model_dir + exp_name + '/eval.gif'
+    gif_fpath = model_dir + 'eval.gif'
     with imageio.get_writer(gif_fpath, mode='I') as writer:
         for frame in frames:
             writer.append_data(frame)
@@ -295,14 +329,14 @@ def test_random_policy(
             frame = env.render(mode=render_mode)
             if gif_fpath is not None and (i+1) % record_interval == 0:
                 frames.append(frame)
-        #print(f'observation = {observation}')
+        #print(f'observation = {observation["heals_mask"]}')
         #print(reward)
         if done:
             print(f'done after {i} steps')
             break
             obs = env.reset()
     end = time.time()
-    print(f'avg step time: {(end - start)/1000.}')
+    print(f'avg step time: {(end - start)/i}')
     print(f'done')
     env.close()
     if gif_fpath is not None:
@@ -337,19 +371,8 @@ def main_test_random_policy(env, argv, exp_dir):
 
 
 
-# pendel
-
 if __name__ == '__main__':
     main()
 
-# TODO:
-# - [v] make melees discrete with cooldown
-# - [v] make map and zones bigger, add more heal items
-# - [x] move other agent obs to entities obs
-# - [x] add obs for next safe zone
-# - [x] use LSTMs
-# - [x] add boxes of randomized shape? maybe not
-
 # Tensorboard runs:
-# start: PPO_102
-
+# - PPO_188

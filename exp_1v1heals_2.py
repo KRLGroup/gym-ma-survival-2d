@@ -17,7 +17,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.policies import MultiInputActorCriticPolicy
 from stable_baselines3.common.callbacks import CheckpointCallback
 
-from masurvival.envs.masurvival_env import OneVsOneHeals
+from masurvival.envs.masurvival_env import OneVsOne
 from policy_optimization.vec_env_costume import VecEnvCostume
 from policy_optimization.sb3_models import MhSaExtractor
 from policy_optimization.sb3_log_multirewards import LogMultiRewards
@@ -96,7 +96,7 @@ config = {
 }
 
 def make_env():
-    return OneVsOneHeals(config=config)
+    return OneVsOne(config=config)
 
 
 # train models

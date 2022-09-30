@@ -55,6 +55,7 @@ class Spawner:
     def placements(self, n: int) -> List[b2Vec2]:
         return [b2Vec2(0,0)]*n
 
+# expects the user to set rng attr explicitely before calling reset
 class SpawnGrid(Spawner):
 
     grid_size: int
@@ -81,13 +82,42 @@ class SpawnGrid(Spawner):
 class ResetSpawns(sim.Module):
     
     def __init__(
-            self, n_spawns: int, prototype: sim.Prototype, spawner: Spawner):
+        self, n_spawns: int,
+        prototype: Union[sim.Prototype, List[sim.Prototype]],
+        spawner: Spawner
+    ):
         self.n_spawns = n_spawns
         self.prototypes = [prototype]*self.n_spawns
         self.spawner = spawner
     
     def post_reset(self, group: sim.Group):
         group.spawn(self.prototypes, self.spawner.placements(self.n_spawns))
+
+# randomizes the shapes in the prototypes of a ResetSpawns as box shapes
+class RandomizeBoxShapes(sim.Module):
+
+    def __init__(self, avg_w, std_w, avg_h, std_h, min_w=0.1, min_h=0.1):
+        self.avg_w = avg_w
+        self.std_w = std_w
+        self.avg_h = avg_h
+        self.std_h = std_h
+        self.min_w = min_w
+        self.min_h = min_h
+
+    def post_reset(self, group: sim.Group):
+        spawn_modules = group.get(ResetSpawns)
+        for spawns in spawn_modules:
+            for i, proto in enumerate(spawns.prototypes):
+                w = max(
+                    self.rng.normal(loc=self.avg_w, scale=self.std_w),
+                    self.min_w
+                )
+                h = max(
+                    self.rng.normal(loc=self.avg_h, scale=self.std_h),
+                    self.min_h
+                )
+                spawns.prototypes[i] = \
+                    proto._replace(shape=sim.rect_shape(width=w, height=h))
 
 
 # items and inventories
