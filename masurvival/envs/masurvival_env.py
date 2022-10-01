@@ -348,37 +348,24 @@ class OneVsOne(BaseEnv):
         item_size = 2 # pos
         box_size = 4*2+3 # 4 vertices, qpos
         R = dict(low=float('-inf'), high=float('inf'))
-        mask_spaces = {}
-        if not self.config['observation']['omniscent']:
-            # The masks have 0 for visible entities and 1 otherwise. This is to allow easy conversion to the pytorch multihead attention masks, which require True for unattendable positions.
-            mask_spaces['zone_mask'] = spaces.Box(
-                **R, shape=(self.n_agents, 1)
-            )
-            if n_heals > 0:
-                mask_spaces['heals_mask'] = spaces.Box(
-                    **R, shape=(self.n_agents, n_heals)
-                )
-            if n_boxes > 0:
-                mask_spaces['boxes_mask'] = spaces.Box(
-                    **R, shape=(self.n_agents, n_boxes)
-                )
-        zone_shape = \
-            (self.n_agents, safe_zone_size) \
-            if self.config['observation']['omniscent'] \
-            else (self.n_agents, 1, safe_zone_size)
         space_dict = {
             'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'other': spaces.Box(**R, shape=(self.n_agents, agent_size)),
-            'zone': spaces.Box(**R, shape=zone_shape),
-            **mask_spaces,
+            'zone': spaces.Box(**R, shape=(self.n_agents, safe_zone_size)),
         }
         if n_heals > 0:
             space_dict['heals'] = spaces.Box(**R, shape=(
                 self.n_agents, n_heals, item_size)
             )
+            space_dict['heals_mask'] = spaces.Box(
+                **R, shape=(self.n_agents, n_heals)
+            )
         if n_boxes > 0:
             space_dict['boxes'] = spaces.Box(**R, shape=(
                 self.n_agents, n_boxes, box_size)
+            )
+            space_dict['boxes_mask'] = spaces.Box(
+                **R, shape=(self.n_agents, n_boxes)
             )
         return spaces.Dict(space_dict)
 
@@ -425,38 +412,47 @@ class OneVsOne(BaseEnv):
         x['other'] = np.vstack([x['agent'][1], x['agent'][0]])
         # Observe the current and next safe zones. 
         x['zone'] = np.tile(x_zone, [self.n_agents, 1])
-        if not self.config['observation']['omniscent']:
-            x['zone'] = np.expand_dims(x['zone'], axis=1)
-            x['zone_mask'] = np_float_zeros(
-                self.observation_space['zone_mask'].shape
-            )
         # Observe the heal items.
         if self.n_heals > 0:
             x_heals = np_float_zeros(
                 self.observation_space['heals'].shape[1:]
             )
-            for i, heal in enumerate(self.simulation.groups['heals'].bodies):
+            heal_bodies = self.simulation.groups['heals'].bodies
+            for i, heal in enumerate(heal_bodies):
                 x_heals[i] = np_floats([*heal.position])
             x['heals'] = np.tile(x_heals, [self.n_agents, 1, 1])
             if not self.config['observation']['omniscent']:
                 x['heals_mask'] = self._fetch_heals_mask(
                     agents, agent_bodies
                 )
+            else:
+                x['heals_mask'] = np_float_zeros(
+                    self.observation_space['heals_mask'].shape
+                )
+                x['heals_mask'][:, len(heal_bodies):self.n_heals] = 1
         # Observe boxes
         if self.n_boxes > 0:
             x_boxes = np_float_zeros(
                 self.observation_space['boxes'].shape[1:]
             )
-            for i, box in enumerate(self.simulation.groups['boxes'].bodies):
+            boxes_bodies = self.simulation.groups['boxes'].bodies
+            for i, box in enumerate(boxes_bodies):
                 vertices = []
                 for vertex in box.fixtures[0].shape.vertices:
                     vertices.extend([*vertex])
-                x_boxes[i] = np_floats([*vertices, *box.position, box.angle])
+                x_boxes[i] = np_floats(
+                    [*vertices, *box.position, box.angle]
+                )
             x['boxes'] = np.tile(x_boxes, [self.n_agents, 1, 1])
             if not self.config['observation']['omniscent']:
                 x['boxes_mask'] = self._fetch_boxes_mask(
                     agents, agent_bodies
                 )
+            else:
+                x['boxes_mask'] = np_float_zeros(
+                    self.observation_space['boxes_mask'].shape
+                )
+                x['boxes_mask'][:, len(boxes_bodies):self.n_boxes] = 1
         # Assert obs is valid and return it.
         assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
         return x

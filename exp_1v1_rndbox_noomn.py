@@ -1,5 +1,3 @@
-# NOTE: the code had a bug that masked all visible entities in this experiment.
-
 from typing import Optional, List
 import time
 import os
@@ -27,7 +25,7 @@ from policy_optimization.sb3_log_multirewards import LogMultiRewards
 def main():
     import sys
     model_dir = './models/'
-    exp_name = '1v1h_no_omn'
+    exp_name = '1v1_rndbox_noomn'
     model_name = model_dir + exp_name + '/model'
     #TODO use os.path
     env = make_env()
@@ -50,6 +48,11 @@ def main():
         print(f'error: unrecognized subcommand: {sys.argv[1]}')
 
 
+# for the policy model
+
+entity_keys = {'heals', 'boxes'}
+
+
 # build the env variant
 
 config = {
@@ -64,6 +67,13 @@ config = {
         'mode': 'alldead', # in {alldead, lastalive}
     },
     'rng': { 'seed': 42 },
+    'safe_zone': {
+        'phases': 8,
+        'cooldown': 100,
+        'damage': 1,
+        'radiuses': [12.5, 10, 7.5, 5, 4, 2, 1],
+        'centers': 'random',
+    },
     'spawn_grid': {
         'grid_size': 8,
         'floor_size': 25,
@@ -77,8 +87,8 @@ config = {
     },
     'melee': {
         'range': 2,
-        'damage': 35,
-        'cooldown': 40, # makes sense as long as its greater than damage
+        'damage': 5,
+        #'cooldown': 40,
         'drift': True, # so that we can actually render actions
     },
     'heals': {
@@ -90,12 +100,23 @@ config = {
             'healing': 75,
         },
     },
-    'safe_zone': {
-        'phases': 8,
-        'cooldown': 100,
-        'damage': 1,
-        'radiuses': [12.5, 10, 7.5, 5, 4, 2, 1],
-        'centers': 'random',
+    'boxes': {
+        'reset_spawns': {
+            'n_boxes': 8,
+            'box_size': 1,
+        },
+        # if 'randomized_shape' is present, item_size above is ignored, and box shapes are randomized at each reset (it should contain params for RandomizeBoxShapes init)
+        'randomized_shape': {
+            'avg_w': 1.,
+            'std_w': 1.,
+            'avg_h': 1.5,
+            'std_h': 1.5,
+        },
+        'item': {
+            'item_size': 0.5,
+            'offset': 0.75,
+        },
+        'health': 20,
     },
 }
 
@@ -111,12 +132,11 @@ def main_train(env, model_dir, exp_name, model_name):
     except FileNotFoundError:
         print('No model file found, creating new model.')
         n_heals = env.env.config['heals']['reset_spawns']['n_spawns']
-        entity_keys = {'zone', 'heals'}
         policy_kwargs = dict(
             features_extractor_class=MhSaExtractor,
             features_extractor_kwargs=dict(
                 entity_keys=entity_keys,
-                omniscent=env.env.config['observation']['omniscent'],
+                #omniscent=env.env.config['observation']['omniscent'],
             )
         )
         model = PPO(
@@ -243,8 +263,10 @@ def test_interactive(
     while not done:
         actions = env.action_space.sample()
         user_action, pressed = get_action_from_keyboard(pressed)
-        if env.n_agents >= 2:
+        if env.n_agents >= 3:
             actions = (user_action,) + (zero_action(),) + actions[2:]
+        elif env.n_agents == 2:
+            actions = (user_action,) + actions[1:]
         elif env.n_agents == 1:
             actions = (user_action,)
         action = actions
@@ -254,7 +276,7 @@ def test_interactive(
         frame = env.render(mode='human')
         if gif_fpath is not None and (i+1) % record_interval == 0:
             frames.append(frame)
-        #print(f'observation = {observation}')
+        #print(f'observation = {observation["boxes_mask"]}')
         rewards.append(reward)
         if done:
             print(f'done after {i} steps')
@@ -316,7 +338,7 @@ def test_random_policy(
             frame = env.render(mode=render_mode)
             if gif_fpath is not None and (i+1) % record_interval == 0:
                 frames.append(frame)
-        print(f'observation = {observation["heals_mask"]}')
+        #print(f'observation = {observation["heals_mask"]}')
         #print(reward)
         if done:
             print(f'done after {i} steps')
@@ -361,16 +383,5 @@ def main_test_random_policy(env, argv, exp_dir):
 if __name__ == '__main__':
     main()
 
-# TODO:
-# - [v] make melees discrete with cooldown
-# - [x] move other agent obs to entities obs
-# - [v] add obs for next safe zone
-# - [x] use LSTMs
-# - [x] add boxes of randomized shape? maybe not
-
-# possible ideas:
-# - make episodes longer and the map and zones bigger
-# - give agents the obs on the next safe zone
-
 # Tensorboard runs:
-# PPO_180, PP0_181, PPO_182
+# - ...
