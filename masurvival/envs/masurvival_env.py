@@ -249,6 +249,15 @@ class OneVsOne(BaseEnv):
             n = self.config['boxes']['reset_spawns']['n_spawns']
         return n
 
+    def entity_keys(self):
+        ks = set()
+        if self.n_heals > 0:
+            ks.add('heals')
+        if self.n_boxes > 0:
+            ks.add('boxes')
+            ks.add('box_items')
+        return ks
+
     def __init__(self, config=None):
         super().__init__(config)
         # Setup agent and global spawner.
@@ -347,6 +356,7 @@ class OneVsOne(BaseEnv):
         safe_zone_size = 3+3 # center & radius + next center & radius
         item_size = 2 # pos
         box_size = 4*2+3 # 4 vertices, qpos
+        box_item_size = 4*2+2 # 4 vertices, pos
         R = dict(low=float('-inf'), high=float('inf'))
         space_dict = {
             'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
@@ -365,6 +375,12 @@ class OneVsOne(BaseEnv):
                 self.n_agents, n_boxes, box_size)
             )
             space_dict['boxes_mask'] = spaces.Box(
+                **R, shape=(self.n_agents, n_boxes)
+            )
+            space_dict['box_items'] = spaces.Box(**R, shape=(
+                self.n_agents, n_boxes, box_item_size)
+            )
+            space_dict['box_items_mask'] = spaces.Box(
                 **R, shape=(self.n_agents, n_boxes)
             )
         return spaces.Dict(space_dict)
@@ -453,6 +469,30 @@ class OneVsOne(BaseEnv):
                     self.observation_space['boxes_mask'].shape
                 )
                 x['boxes_mask'][:, len(boxes_bodies):self.n_boxes] = 1
+        # Observe box items.
+        if self.n_boxes > 0:
+            x_box_items = np_float_zeros(
+                self.observation_space['box_items'].shape[1:]
+            )
+            box_item_bodies = self.simulation.groups['box_items'].bodies
+            box_item_module = \
+                self.simulation.groups['box_items'].get(ObjectItem)[0]
+            for i, box_item in enumerate(box_item_bodies):
+                shape = box_item_module.data[box_item].shape
+                vertices = []
+                for vertex in shape.vertices:
+                    vertices.extend([*vertex])
+                x_box_items[i] = np_floats([*vertices, *box_item.position])
+            x['box_items'] = np.tile(x_box_items, [self.n_agents, 1, 1])
+            if not self.config['observation']['omniscent']:
+                x['box_items_mask'] = self._fetch_box_items_mask(
+                    agents, agent_bodies
+                )
+            else:
+                x['box_items_mask'] = np_float_zeros(
+                    self.observation_space['box_items_mask'].shape
+                )
+                x['box_items_mask'][:,len(box_item_bodies):self.n_boxes] = 1
         # Assert obs is valid and return it.
         assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
         return x
@@ -477,10 +517,10 @@ class OneVsOne(BaseEnv):
     def _fetch_heals_mask(self, agents: sim.Group, agent_bodies):
         masks = np_float_ones(self.observation_space['heals_mask'].shape)
         cameras = agents.get(sim.Cameras)[0]
-        heals = self.simulation.groups['heals'].get(sim.IndexBodies)[0].bodies
+        heals = self.simulation.groups['heals'].bodies
         for a_body, seen in zip(agents.bodies, cameras.seen):
             agent_id = agent_bodies.index(a_body)
-            masks[agent_id] = np_floats([
+            masks[agent_id][:len(heals)] = np_floats([
                 0 if h in seen else 1 for h in heals
             ])
         return masks
@@ -488,11 +528,24 @@ class OneVsOne(BaseEnv):
     def _fetch_boxes_mask(self, agents: sim.Group, agent_bodies):
         masks = np_float_ones(self.observation_space['boxes_mask'].shape)
         cameras = agents.get(sim.Cameras)[0]
-        boxes = self.simulation.groups['boxes'].get(sim.IndexBodies)[0].bodies
+        boxes = self.simulation.groups['boxes'].bodies
         for a_body, seen in zip(agents.bodies, cameras.seen):
             agent_id = agent_bodies.index(a_body)
-            masks[agent_id] = np_floats([
+            masks[agent_id][:len(boxes)] = np_floats([
                 0 if box in seen else 1 for box in boxes
+            ])
+        return masks
+
+    def _fetch_box_items_mask(self, agents: sim.Group, agent_bodies):
+        masks = np_float_ones(
+            self.observation_space['box_items_mask'].shape
+        )
+        cameras = agents.get(sim.Cameras)[0]
+        box_items = self.simulation.groups['box_items'].bodies
+        for a_body, seen in zip(agents.bodies, cameras.seen):
+            agent_id = agent_bodies.index(a_body)
+            masks[agent_id][:len(box_items)] = np_floats([
+                0 if bi in seen else 1 for bi in box_items
             ])
         return masks
 

@@ -48,11 +48,6 @@ def main():
         print(f'error: unrecognized subcommand: {sys.argv[1]}')
 
 
-# for the policy model
-
-entity_keys = {'heals', 'boxes'}
-
-
 # build the env variant
 
 config = {
@@ -135,7 +130,7 @@ def main_train(env, model_dir, exp_name, model_name):
         policy_kwargs = dict(
             features_extractor_class=MhSaExtractor,
             features_extractor_kwargs=dict(
-                entity_keys=entity_keys,
+                entity_keys=env.env.entity_keys(),
                 #omniscent=env.env.config['observation']['omniscent'],
             )
         )
@@ -276,7 +271,8 @@ def test_interactive(
         frame = env.render(mode='human')
         if gif_fpath is not None and (i+1) % record_interval == 0:
             frames.append(frame)
-        #print(f'observation = {observation["boxes_mask"]}')
+        #print(f'observation = {observation["box_items"]}')
+        #print(f'observation = {observation["box_items_mask"]}')
         rewards.append(reward)
         if done:
             print(f'done after {i} steps')
