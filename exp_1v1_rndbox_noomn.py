@@ -271,8 +271,10 @@ def test_interactive(
         frame = env.render(mode='human')
         if gif_fpath is not None and (i+1) % record_interval == 0:
             frames.append(frame)
-        #print(f'observation = {observation["box_items"]}')
-        #print(f'observation = {observation["box_items_mask"]}')
+        #print(f'heal_slot = {observation["heal_slot"]}')
+        #print(f'heal_slot_mask = {observation["heal_slot_mask"]}')
+        #print(f'box_slot = {observation["box_slot"]}')
+        #print(f'box_slot_mask = {observation["box_slot_mask"]}')
         rewards.append(reward)
         if done:
             print(f'done after {i} steps')

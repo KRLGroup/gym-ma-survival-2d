@@ -261,9 +261,11 @@ class OneVsOne(BaseEnv):
         ks = set()
         if self.n_heals > 0:
             ks.add('heals')
+            ks.add('heal_slot')
         if self.n_boxes > 0:
             ks.add('boxes')
             ks.add('box_items')
+            ks.add('box_slot')
         return ks
 
     def __init__(self, config=None):
@@ -357,28 +359,36 @@ class OneVsOne(BaseEnv):
         self.simulation = sim.Simulation(groups=groups)
 
     def compute_obs_space(self):
-        n_lasers = self.config['lidars']['n_lasers']
-        n_heals = self.n_heals
-        n_boxes = self.n_boxes
+        #n_lasers = self.config['lidars']['n_lasers']
         agent_size = 1+1+3+3 # ID, health, qpos, qvel
         safe_zone_size = 3+3 # center & radius + next center & radius
-        item_size = 2 # pos
-        box_size = 4*2+3 # 4 vertices, qpos
-        box_item_size = 4*2+2 # 4 vertices, pos
         R = dict(low=float('-inf'), high=float('inf'))
         space_dict = {
             'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'other': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'zone': spaces.Box(**R, shape=(self.n_agents, safe_zone_size)),
         }
-        if n_heals > 0:
+        if self.n_heals > 0:
+            n_heals = self.n_heals
+            heal_item_size = 2 # pos
+            heal_slot_size = 1 # heal amount
             space_dict['heals'] = spaces.Box(**R, shape=(
-                self.n_agents, n_heals, item_size)
+                self.n_agents, n_heals, heal_item_size)
             )
             space_dict['heals_mask'] = spaces.Box(
                 **R, shape=(self.n_agents, n_heals)
             )
-        if n_boxes > 0:
+            space_dict['heal_slot'] = spaces.Box(**R, shape=(
+                self.n_agents, 1, heal_slot_size
+            ))
+            space_dict['heal_slot_mask'] = spaces.Box(**R, shape=(
+                self.n_agents, 1
+            ))
+        if self.n_boxes > 0:
+            n_boxes = self.n_boxes
+            box_size = 4*2+3 # 4 vertices, qpos
+            box_item_size = 4*2+2 # 4 vertices, pos
+            box_slot_size = 4*2 # 4 vertices
             space_dict['boxes'] = spaces.Box(**R, shape=(
                 self.n_agents, n_boxes, box_size)
             )
@@ -391,6 +401,12 @@ class OneVsOne(BaseEnv):
             space_dict['box_items_mask'] = spaces.Box(
                 **R, shape=(self.n_agents, n_boxes)
             )
+            space_dict['box_slot'] = spaces.Box(**R, shape=(
+                self.n_agents, 1, box_slot_size
+            ))
+            space_dict['box_slot_mask'] = spaces.Box(**R, shape=(
+                self.n_agents, 1
+            ))
         return spaces.Dict(space_dict)
 
     def compute_action_space(self):        
@@ -521,6 +537,36 @@ class OneVsOne(BaseEnv):
                     self.observation_space['box_items_mask'].shape
                 )
                 x['box_items_mask'][:,len(box_item_bodies):self.n_boxes] = 1
+        # Observe (usable) inventory slots.
+        if self.n_heals > 0:
+            x['heal_slot'] = np_float_zeros(
+                self.observation_space['heal_slot'].shape
+            )
+            x['heal_slot_mask'] = np_float_ones(
+                self.observation_space['heal_slot_mask'].shape
+            )
+        if self.n_boxes > 0:
+            x['box_slot'] = np_float_zeros(
+                self.observation_space['box_slot'].shape
+            )
+            x['box_slot_mask'] = np_float_ones(
+                self.observation_space['box_slot_mask'].shape
+            )
+        inventories = agents.get(Inventory)[0].inventories
+        for i, agent_body in enumerate(agent_bodies):
+            if agent_body is None or len(inventories[agent_body]) == 0:
+                continue
+            item, data = inventories[agent_body][-1]
+            if self.n_heals > 0 and isinstance(item, Heal):
+                x['heal_slot'][i] = \
+                    self.config['heals']['heal']['healing']
+                x['heal_slot_mask'][i][0] = 0
+            if self.n_boxes > 0 and isinstance(item, ObjectItem):
+                vertices = []
+                for vertex in data.shape.vertices:
+                    vertices.extend([*vertex])
+                x['box_slot'][i] = np_floats(vertices)
+                x['box_slot_mask'][i][0] = 0
         # Assert obs is valid and return it.
         assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
         return x
