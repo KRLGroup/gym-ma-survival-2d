@@ -19,7 +19,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from masurvival.envs.masurvival_env import OneVsOne
 from policy_optimization.vec_env_costume import VecEnvCostume
 from policy_optimization.sb3_models import MhSaExtractor
-from policy_optimization.sb3_log_multirewards import LogMultiRewards
+from policy_optimization.sb3_log_stats import LogStats
 
 
 def main():
@@ -146,7 +146,7 @@ def main_train(env, model_dir, exp_name, model_name):
             target_kl=0.01,
         )
     
-    log_multirewards = LogMultiRewards()
+    log_stats = LogStats()
     checkpoint_callback = CheckpointCallback(
         # save freq is doubled for some sb3 reason
         save_freq=500_000, save_path=model_dir + exp_name + '/checkpoints',
@@ -157,7 +157,7 @@ def main_train(env, model_dir, exp_name, model_name):
         model.learn(
             total_timesteps=10_000_000,
             reset_num_timesteps=True,
-            callback=[log_multirewards, checkpoint_callback],
+            callback=[log_stats, checkpoint_callback],
         )
     except KeyboardInterrupt:
         pass

@@ -74,6 +74,7 @@ class BaseEnv(gym.Env):
 
     def step(self, # type: ignore
              actions: Action) -> Tuple[Observation, Reward, bool, Dict]:
+        self.pre_step()
         actions = tuple(a for a in actions)
         assert self.action_space.contains(actions), f"Invalid action {actions}."
         agents = self.simulation.groups['agents']
@@ -84,7 +85,14 @@ class BaseEnv(gym.Env):
         done = self.is_done(agents)
         info: Dict = {}
         self.steps += 1
+        self.post_step()
         return obs, rewards, done, info # type: ignore
+
+    def pre_step(self):
+        pass
+
+    def post_step(self):
+        pass
 
     # Ignores the render mode after the first call. TODO change that
     # Always returns the rendered frame, even with 'human' mode.
@@ -403,6 +411,26 @@ class OneVsOne(BaseEnv):
             else:
                 m.rng = self.np_random
 
+    def post_step(self):
+        self._update_stats()
+
+    # returns current stats and resets internal stats
+    def flush_stats(self):
+        stats = dict(self.stats)
+        self.stats = {
+            'reward0': 0.,
+            'reward1': 0.,
+        }
+        return stats
+
+    # updates and returns stats
+    def _update_stats(self):
+        if not hasattr(self, 'stats'):
+            self.stats = {} # dummy stats to allow flushing and resetting
+            self.flush_stats()
+        self.stats['reward0'] += self.last_rewards[0]
+        self.stats['reward1'] += self.last_rewards[1]
+
     def fetch_observations(self, agents: sim.Group) -> Observation:
         agent_bodies = agents.get(sim.IndexBodies)[0].bodies
         health = agents.get(Health)[0]
@@ -575,6 +603,7 @@ class OneVsOne(BaseEnv):
         rewards += np.array([
             r_dead if body is None else r_alive for body in bodies
         ])
+        self.last_rewards = rewards
         return rewards
 
     def is_done(self, agents):
