@@ -289,13 +289,23 @@ class GiveLast(sim.Module):
     drift: bool
     give: List[bool]
     takers: List[Optional[b2Body]]
+    # if a taker is in strangers[giver], the give action fails
+    strangers: Dict[b2Body, Set[b2Body]]
 
     def __init__(self, shape: b2Shape, drift: bool = False):
         self.shape = shape
         self.drift = drift
 
+    def add_strangers(self, body: b2Body, strangers):
+        if body not in self.strangers:
+            self.strangers[body] = set()
+        if not isinstance(strangers, set):
+            strangers = set(strangers)
+        self.strangers[body] |= strangers
+
     def post_reset(self, group: sim.Group):
         self.give = []
+        self.strangers = {}
 
     def pre_step(self, group: sim.Group):
         self._update_takers(group)
@@ -304,8 +314,15 @@ class GiveLast(sim.Module):
             self.give += [False]*missing
         inventories = group.get(Inventory)
         for giver, taker, gives in zip(group.bodies, self.takers, self.give):
-            if gives and taker is not None:
-                [inventory.give(giver, taker) for inventory in inventories]
+            if not gives or taker is None:
+                continue
+            if giver in self.strangers and taker in self.strangers[giver]:
+#                 indexed_bodies = group.get(sim.IndexBodies)[0].bodies
+#                 giver_id = indexed_bodies.index(giver)
+#                 taker_id = indexed_bodies.index(taker)
+#                 print(f'give action failed: g = {giver_id}, taker = {taker_id}, strangers = {stranger_ids}')
+                continue
+            [inventory.give(giver, taker) for inventory in inventories]
         if not self.drift:
             self.give = []
 
@@ -366,6 +383,8 @@ class Health(sim.Module):
     immune: bool
     # if an entry for a body is present, it can only be damaged by causes in that set; if the entry is not present, it can be damaged by anyone; if the entry has 0 elements, the body is immune
     vulnerabilities: Dict[b2Body, Set[Any]]
+    # opposite of vulnerabilities; they are checked first, so if a cause appears in both, immunities take precedence
+    immunities: Dict[b2Body, Set[Any]]
     healths: Dict[b2Body, int]
     on_death: Optional[Callable]
 
@@ -377,6 +396,7 @@ class Health(sim.Module):
         #TODO do this in post_spawn if attr is not set yet
         self.healths = {body: self.health for body in group.bodies}
         self.vulnerabilities = {}
+        self.immunities = {}
         self.immune = False
 
     def post_step(self, group: sim.Group):
@@ -392,6 +412,8 @@ class Health(sim.Module):
             del self.healths[body]
             if body in self.vulnerabilities:
                 del self.vulnerabilities[body]
+            if body in self.immunities:
+                del self.immunities[body]
 
     # convenience method to add vulnerabilities
     def add_vulnerabilities(self, body: b2Body, causes):
@@ -413,14 +435,35 @@ class Health(sim.Module):
         if del_empty and len(self.vulnerabilities[body]) == 0:
             del self.vulnerabilities[body]
 
+    # convenience method to add immunities
+    def add_immunities(self, body: b2Body, causes):
+        if body not in self.immunities:
+            self.immunities[body] = set()
+        if not isinstance(causes, set):
+            causes = set(causes)
+        self.immunities[body] |= causes
+
+    # removes given immunities; if the resulting list is empty and del_empty is True, the body entry gets removed from the immunities dict
+    def remove_immunities(
+        self, body: b2Body, causes, del_empty: bool = True
+    ):
+        if body not in self.immunities:
+            return
+        if not isinstance(causes, set):
+            causes = set(causes)
+        self.immunities[body] -= causes
+        if del_empty and len(self.immunities[body]) == 0:
+            del self.immunities[body]
+
     def _change_health(self, body: b2Body, delta: int, cause: Any = None):
         if body not in self.healths:
             return
-        if body in self.vulnerabilities:
-            if len(self.vulnerabilities[body]) == 0:
-                return
-            if cause not in self.vulnerabilities[body]:
-                return
+        V = self.vulnerabilities.get(body)
+        I = self.immunities.get(body)
+        if I is not None and cause in I:
+            return
+        if V is not None and cause not in V:
+            return
         self.healths[body] += delta
         if self.healths[body] <= 0 and self.on_death is not None:
             self.on_death(body, cause)
@@ -438,16 +481,21 @@ class ContinuousMelee(sim.Module):
     range: float
     damage: int
     drift: bool
+    get_attacker: Optional[Callable]
     #TODO init these in the post reset
     targets: List[Optional[b2Body]] = []
     origins: List[b2Vec2] = []
     endpoints: List[b2Vec2] = []
     attacks: List[bool] = []
 
-    def __init__(self, range: float, damage: int, drift: bool = False):
+    def __init__(
+        self, range: float, damage: int, drift: bool = False, 
+        get_attacker: Optional[Callable] = None
+    ):
         self.range = range
         self.damage = damage
         self.drift = drift
+        self.get_attacker = get_attacker
 
     def pre_step(self, group: sim.Group):
         self.origins = [body.position for body in group.bodies]
@@ -469,6 +517,8 @@ class ContinuousMelee(sim.Module):
 
     def _attack(self, target: b2Body, damage: int, attacker: b2Body):
         healths = sim.Group.body_group(target).get(Health)
+        if self.get_attacker is not None:
+            attacker = self.get_attacker(attacker)
         for health in healths:
             health.damage(target, damage, cause=attacker) # type: ignore
 
@@ -479,6 +529,8 @@ class Melee(sim.Module):
     damage: int
     cooldown: int
     drift: bool
+    # which attribute of the attacker body is used as the cause of damage
+    get_attacker: Optional[Callable]
     #TODO init these in the post reset
     targets: List[Optional[b2Body]] = []
     origins: List[b2Vec2] = []
@@ -486,12 +538,14 @@ class Melee(sim.Module):
     attacks: List[bool] = []
 
     def __init__(
-        self, range: float, damage: int, cooldown: int, drift: bool = False
+        self, range: float, damage: int, cooldown: int, drift: bool = False,
+        get_attacker: Optional[Callable] = None
     ):
         self.range = range
         self.damage = damage
         self.cooldown = cooldown
         self.drift = drift
+        self.get_attacker = get_attacker
 
     def post_reset(self, group: sim.Group):
         self.cooldowns = {}
@@ -526,31 +580,22 @@ class Melee(sim.Module):
 
     def _attack(self, target: b2Body, damage: int, attacker: b2Body):
         healths = sim.Group.body_group(target).get(Health)
+        if self.get_attacker is not None:
+            attacker = self.get_attacker(attacker)
         for health in healths:
             health.damage(target, damage, cause=attacker) # type: ignore
 
 # adds deaths to a buffer (not with body objects, but with body indices) that can be flushed with flush method
 class TrackKills(sim.Module):
 
-    def __init__(self, index_module: sim.IndexBodies = None):
-        self.index_module = index_module
-
     def post_reset(self, group: sim.Group):
-        self.group = group
-        if self.index_module is None:
-            self.index_module = group.get(sim.IndexBodies)[0]
         for m in group.get(Health):
             m.on_death = self
         self.kills = []
 
     # on_death callback for health module(s)
     def __call__(self, body: b2Body, cause: Any):
-        if not isinstance(cause, b2Body):
-            return
-        if not cause in self.group.bodies:
-            return
-        killer_id = self.index_module.bodies.index(cause)
-        self.kills.append(killer_id)
+        self.kills.append((body, cause))
 
     def flush(self):
         kills = self.kills
@@ -834,6 +879,77 @@ class OwnedObject(Object):
     # the on_death callback for the health module(s)
     def __call__(self, body: b2Body, cause: Any):
         self.next_spawns.append((body.position, (sim.prototype(body), cause)))
+
+
+# teams
+
+class TeamBadge:
+    def __init__(self, i):
+        self.i = i
+
+# divides the bodies in the group into 2 teams; mainly used for immunity between team memebers and convenience functions
+# should be put after index bodies and any initial spawner
+class TwoTeams(sim.Module):
+
+    def __init__(self, index_bodies: sim.IndexBodies = None):
+        self.index_bodies = index_bodies
+
+    def post_reset(self, group):
+        self.team_badges = [TeamBadge(0), TeamBadge(1)]
+        for m in group.get(Melee):
+            m.get_attacker = lambda b: self.team_badges[self.get_team_id(b)]
+        for m in group.get(ContinuousMelee):
+            m.get_attacker = lambda b: self.team_badges[self.get_team_id(b)]
+        if self.index_bodies is None:
+            self.index_bodies = group.get(sim.IndexBodies)[0]
+        # the first body id of the second team
+        self.split_id = len(self.index_bodies.bodies) // 2
+        self.teams = [
+            list(range(0, self.split_id)),
+            list(range(self.split_id, len(self.index_bodies.bodies))),
+        ]
+        for body in group.bodies:
+            for m in group.get(Health):
+                m.add_immunities(
+                    body, [self.team_badges[self.get_team_id(body)]]
+                )
+            for m in group.get(GiveLast):
+                opponent_team_id = int(not bool(self.get_team_id(body)))
+                m.add_strangers(
+                    body,
+                    set(self.index_bodies.bodies[i]
+                        for i in self.teams[opponent_team_id]),
+                )
+        #for i, body in enumerate(self.index_bodies.bodies):
+        #    print(f'Body {i} is in team {self.get_team_id(body)}')
+
+    def get_team_id(self, body_or_id):
+        body_id = body_or_id
+        if isinstance(body_or_id, b2Body):
+            if body_or_id not in self.index_bodies.bodies:
+                return None
+            body_id = self.index_bodies.bodies.index(body_or_id)
+        if body_id < self.split_id:
+            return 0
+        else:
+            return 1
+
+    def get_team(self, body_or_id):
+        return self.teams[self.get_team_id(body_or_id)]
+    
+    def get_team_bodies(self, body_or_id):
+        return [
+            self.index_bodies.bodies[i]
+            for i in self.get_team(body_or_id)
+            if self.index_bodies.bodies[i] is not None
+        ]
+    
+    def team_is_alive(self, team_id):
+        return any(
+            self.index_bodies.bodies[i] is not None
+            for i in self.teams[team_id]
+        )
+
 
 
 # utilties

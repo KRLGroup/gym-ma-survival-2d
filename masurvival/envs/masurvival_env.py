@@ -16,7 +16,7 @@ from masurvival.semantics import (
     Health, Heal, ContinuousMelee, Item, item_prototype, Inventory, 
     AutoPickup, UseLast, DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, 
     ObjectItem, ImmunityPhase, Melee, RandomizeBoxShapes, OwnedObject, 
-    OwnedObjectItem, TrackKills)
+    OwnedObjectItem, TrackKills, TwoTeams, TeamBadge)
 
 Vec = Tuple[float, ...]
 # Self, lidars, other agents, inventory, items, objects
@@ -167,14 +167,12 @@ onevsone_heals_config: Config = {
         'n_agents': 2,
         'agent_size': 1,
     },
+    'teams': {
+        'twoteams': False,
+    },
     'cameras': {
         'fov': 0.4*np.pi,
         'depth': 10,
-    },
-    'lidars': {
-        'n_lasers': 8,
-        'fov': 0.8*np.pi,
-        'depth': 2,
     },
     'motors': {
         'impulse': (0.25, 0.25, 0.0125),
@@ -240,7 +238,7 @@ onevsone_heals_config: Config = {
 }
 
 # uses omniscent, heals-only config by default
-class OneVsOne(BaseEnv):
+class MaSurvival(BaseEnv):
 
     config = onevsone_heals_config
 
@@ -272,8 +270,13 @@ class OneVsOne(BaseEnv):
             return False
         return 'ownership' in boxes_config and boxes_config['ownership']
 
+    @property
+    def has_teams(self):
+        return 'teams' in self.config and self.config['teams']['twoteams']
+
     def entity_keys(self):
         ks = set()
+        ks.add('others')
         if self.n_heals > 0:
             ks.add('heals')
             ks.add('heal_slot')
@@ -294,7 +297,6 @@ class OneVsOne(BaseEnv):
         agents_config['n_spawns'] = agents_config.pop('n_agents')
         immunity_phase_config = self.config['immunity_phase']
         cameras_config = self.config['cameras']
-        lidar_config = self.config['lidars']
         motor_config = self.config['motors']
         health_config = self.config['health']
         melee_config = self.config['melee']
@@ -315,7 +317,6 @@ class OneVsOne(BaseEnv):
             sim.TrackDeaths(), # this must come before IndexBodies to work
             sim.IndexBodies(),
             sim.Cameras(**cameras_config),
-            #sim.Lidars(**lidar_config),
             sim.DynamicMotors(**motor_config),
             DeathDrop(**death_drop_config), # needs to be before inventory
             Inventory(**inventory_config),
@@ -329,6 +330,9 @@ class OneVsOne(BaseEnv):
             self.melee_class(**melee_config), # needs to be after anything that kills bodies
             #BattleRoyale(),
         ]
+        if self.has_teams:
+            agents_modules.append(TwoTeams())
+            print(f'Splitting agents into 2 teams.')
         # Setup boxes (objects and items).
         boxes_config = self.config['boxes']
         boxes_object_class = OwnedObject if self.box_ownership else Object
@@ -380,13 +384,20 @@ class OneVsOne(BaseEnv):
 
     def compute_obs_space(self):
         #n_lasers = self.config['lidars']['n_lasers']
-        agent_size = 1+1+3+3 # ID, health, qpos, qvel
+        agent_size = 1+1+3+3 # agent ID, health, qpos, qvel
+        if self.has_teams:
+            agent_size += 1 # team ID
         safe_zone_size = 3+3 # center & radius + next center & radius
         R = dict(low=float('-inf'), high=float('inf'))
         space_dict = {
             'agent': spaces.Box(**R, shape=(self.n_agents, agent_size)),
-            'other': spaces.Box(**R, shape=(self.n_agents, agent_size)),
             'zone': spaces.Box(**R, shape=(self.n_agents, safe_zone_size)),
+            'others': spaces.Box(**R, shape=(
+                self.n_agents, self.n_agents-1, agent_size,
+            )),
+            'others_mask': spaces.Box(**R, shape=(
+                self.n_agents, self.n_agents-1
+            )),
         }
         if self.n_heals > 0:
             n_heals = self.n_heals
@@ -472,8 +483,28 @@ class OneVsOne(BaseEnv):
         health = agents.get(Health)[0]
         safe_zone = agents.get(SafeZone)[0]
         x = {}
-        # Observe the agent.
-        x['agent'] = self._fetch_self_observations(agent_bodies, health)
+        # Observe agents as themselves and as others.
+        x['agent'] = np_float_zeros(
+            self.observation_space['agent'].shape
+        )
+        x['others'] = np_float_zeros(
+            self.observation_space['others'].shape
+        )
+        x['others_mask'] = np_float_zeros(
+            self.observation_space['others_mask'].shape
+        )
+        agent_obs_list, agent_mask_list = \
+            self._fetch_agents_observations(agents)
+        for i, agent_body in enumerate(agent_bodies):
+            x['agent'][i] = agent_obs_list[i]
+            x['others'][i] = np.concatenate(
+                [np.expand_dims(agent_obs_list[j], axis=0)
+                 for j in range(len(agent_bodies))
+                 if j != i],
+                axis=0,
+            )
+            x['others_mask'][i] = agent_mask_list[i]
+        # Observe the current and next safe zones.
         next_zone = None
         if safe_zone.phase < safe_zone.phases-1:
             next_zone = [
@@ -487,10 +518,6 @@ class OneVsOne(BaseEnv):
             safe_zone.zone[0].radius,
             *next_zone,
         ])
-        assert self.n_agents == 2
-        # Observe the other agent.
-        x['other'] = np.vstack([x['agent'][1], x['agent'][0]])
-        # Observe the current and next safe zones. 
         x['zone'] = np.tile(x_zone, [self.n_agents, 1])
         # Observe the heal items.
         if self.n_heals > 0:
@@ -600,22 +627,52 @@ class OneVsOne(BaseEnv):
         assert self.observation_space.contains(x), f'{x} not contained in the observation space {self.observation_space}'
         return x
 
-    def _fetch_self_observations(self, agent_bodies, health):
-        x = np_float_zeros(self.observation_space['agent'].shape)
-        for i, agent_body in enumerate(agent_bodies):
+    def _fetch_agents_observations(self, agents: sim.Group):
+        indexed_agents = agents.get(sim.IndexBodies)[0].bodies
+        health = agents.get(Health)[0]
+        cameras = agents.get(sim.Cameras)[0]
+        obs_list = []
+        mask_list = []
+        for i, agent_body in enumerate(indexed_agents):
+            team_id = []
+            if self.has_teams:
+                team_id = [agents.get(TwoTeams)[0].get_team_id(i)]
             if agent_body is None:
-                #TODO does it make sense to give the agent a very far away position?
-                x[i][0] = i
+                obs_list.append(np_floats([
+                    i,
+                    *team_id,
+                    0,
+                    0, 0,
+                    0,
+                    0, 0,
+                    0,
+                ]))
+                mask_list.append(np_float_ones(
+                    self.observation_space['others_mask'].shape[1:]
+                ))
                 continue
-            x[i] = np_floats([
+            obs_list.append(np_floats([
                 i,
+                *team_id,
                 health.healths[agent_body],
                 *agent_body.position,
                 agent_body.angle,
                 *agent_body.linearVelocity,
                 agent_body.angularVelocity
-            ])
-        return x
+            ]))
+            others_mask = np_float_ones(
+                self.observation_space['others_mask'].shape[1:]
+            )
+            seen = cameras.seen[agents.bodies.index(agent_body)]
+            k = 0
+            for j, other_agent_body in enumerate(indexed_agents):
+                if j == i:
+                    continue
+                if other_agent_body in seen:
+                    others_mask[k] = 0
+                k += 1
+            mask_list.append(others_mask)
+        return obs_list, mask_list
 
     def _fetch_heals_mask(self, agents: sim.Group, agent_bodies):
         masks = np_float_ones(self.observation_space['heals_mask'].shape)
@@ -675,27 +732,66 @@ class OneVsOne(BaseEnv):
             r_kill: float = 0,
             r_death: float = 0,
     ) -> Tuple[float, ...]:
-        bodies = agents.get(sim.IndexBodies)[0].bodies
+        indexed_agents = agents.get(sim.IndexBodies)[0].bodies
         rewards = np.zeros(self.n_agents, dtype=np.float32)
-        rewards += np.array([
-            r_dead if body is None else r_alive for body in bodies
-        ])
-        for killer_id in agents.get(TrackKills)[0].flush():
-            rewards[killer_id] += r_kill
-            #print(f'[{self.steps}] kill by {killer_id}, r = {rewards}')
-        for dead_id in agents.get(sim.TrackDeaths)[0].flush():
-            rewards[dead_id] += r_death
-            #print(f'[{self.steps}] {dead_id} is dead, r = {rewards}')
+        kills = agents.get(TrackKills)[0].flush()
+        deaths = agents.get(sim.TrackDeaths)[0].flush()
+        if not self.has_teams:
+            # Rewards for being alive or dead.
+            for i, agent_body in enumerate(indexed_agents):
+                if agent_body is not None:
+                    rewards[i] += r_alive
+                else:
+                    rewards[i] += r_dead
+            # Rewards for kills and deaths.
+            for _, killer in kills:
+                if killer in indexed_agents:
+                    rewards[indexed_agents.index(killer)] += r_kill
+                    #print(f'[{self.steps}] kill by {indexed_agents.index(killer)}, r = {rewards}')
+            for dead_id in deaths:
+                rewards[dead_id] += r_death
+                #print(f'[{self.steps}] {dead_id} is dead, r = {rewards}')
+        else:
+            teams = agents.get(TwoTeams)[0]
+            # Rewards for being alive or dead.
+            for team_id in [0,1]:
+                if teams.team_is_alive(team_id):
+                    rewards[np.array(teams.teams[team_id])] += r_alive
+                else:
+                    rewards[np.array(teams.teams[team_id])] += r_dead
+            # Rewards for kills.
+            for _, killer_badge in kills:
+                if not isinstance(killer_badge, TeamBadge):
+                    continue
+                rewards[np.array(teams.teams[killer_badge.i])] += r_kill
+                #print(f'[{self.steps}] kill by {killer_badge.i}, r = {rewards}')
+            # Rewards for deaths.
+            for dead_id in deaths:
+                victim_team = teams.teams[teams.get_team_id(dead_id)]
+                rewards[np.array(victim_team)] += r_death
+                #print(f'[{self.steps}] {dead_id} is dead, r = {rewards}')
         self.last_rewards = rewards
         return rewards
+
+    def _get_teammate_ids(self, agents: sim.Group, agent_body: b2Body):
+        if not self.has_teams:
+            return 
+        agents.get(TwoTeams)[0].get_teammates_ids(agent_body)
 
     def is_done(self, agents):
         #done = agents.get(BattleRoyale)[0].over
         done = False
-        n_alive = len([
-            b for b in agents.get(sim.IndexBodies)[0].bodies
-            if b is not None
-        ])
+        if self.has_teams:
+            teams = agents.get(TwoTeams)[0]
+            n_alive = len([
+                team_id for team_id in [0,1] 
+                if teams.team_is_alive(team_id)
+            ])
+        else:
+            n_alive = len([
+                b for b in agents.get(sim.IndexBodies)[0].bodies
+                if b is not None
+            ])
         #print(f'[{self.steps}] n_alive = {n_alive}')
         if self.config['gameover']['mode'] == 'alldead':
             done = n_alive == 0
