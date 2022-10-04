@@ -267,6 +267,27 @@ class IndexBodies(Module):
             if body in self.bodies:
                 self.bodies[self.bodies.index(body)] = None
 
+# adds deaths to a buffer (not with body objects, but with body indices) that can be flushed with flush method
+class TrackDeaths(Module):
+
+    def __init__(self, index_module: IndexBodies = None):
+        self.index_module = index_module
+
+    def post_reset(self, group: Group):
+        if self.index_module is None:
+            self.index_module = group.get(IndexBodies)[0]
+        self.deaths = []
+
+    def pre_despawn(self, bodies: b2Body):
+        for body in bodies:
+            dead_id = self.index_module.bodies.index(body)
+            self.deaths.append(dead_id)
+    
+    def flush(self):
+        deaths = self.deaths
+        self.deaths = []
+        return deaths
+
 # prints a death message when bodies despawn from the group, using body 
 # indices if available; mostly useful for debugging
 class LogDeaths(Module):

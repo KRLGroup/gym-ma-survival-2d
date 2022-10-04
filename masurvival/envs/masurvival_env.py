@@ -15,7 +15,8 @@ from masurvival.semantics import (
     SpawnGrid, ResetSpawns, agent_prototype, box_prototype, ThickRoomWalls, 
     Health, Heal, ContinuousMelee, Item, item_prototype, Inventory, 
     AutoPickup, UseLast, DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, 
-    ObjectItem, ImmunityPhase, Melee, RandomizeBoxShapes)
+    ObjectItem, ImmunityPhase, Melee, RandomizeBoxShapes, OwnedObject, 
+    OwnedObjectItem, TrackKills)
 
 Vec = Tuple[float, ...]
 # Self, lidars, other agents, inventory, items, objects
@@ -141,8 +142,14 @@ onevsone_heals_config: Config = {
         'omniscent': True,
     },
     'reward_scheme': {
+        # reward while alive
         'r_alive': 1,
+        # reward while dead (only makes sense if gameover is alldead)
         'r_dead': -1,
+        # reward for kills
+        'r_kill': 0,
+        # reward at death
+        'r_death': 0,
     },
     'gameover' : {
         'mode': 'alldead', # in {alldead, lastalive}
@@ -188,6 +195,7 @@ onevsone_heals_config: Config = {
             'n_boxes': 4,
             'box_size': 1,
         },
+        'ownership': False, # controls whether boxes are "owned" by the first agent that breaks them
         # if 'randomized_shape' is present, item_size above is ignored, and box shapes are randomized at each reset (it should contain params for RandomizeBoxShapes init)
 #         'randomized_shape': {
 #             'avg_w': ,
@@ -257,6 +265,13 @@ class OneVsOne(BaseEnv):
             n = self.config['boxes']['reset_spawns']['n_spawns']
         return n
 
+    @property
+    def box_ownership(self):
+        boxes_config = self.config.get('boxes')
+        if boxes_config is None:
+            return False
+        return 'ownership' in boxes_config and boxes_config['ownership']
+
     def entity_keys(self):
         ks = set()
         if self.n_heals > 0:
@@ -297,6 +312,7 @@ class OneVsOne(BaseEnv):
         agents_modules = [
             ResetSpawns(spawner=self.spawner, **agents_config),
             #sim.LogDeaths(), # this must come before IndexBodies to work
+            sim.TrackDeaths(), # this must come before IndexBodies to work
             sim.IndexBodies(),
             sim.Cameras(**cameras_config),
             #sim.Lidars(**lidar_config),
@@ -304,6 +320,7 @@ class OneVsOne(BaseEnv):
             DeathDrop(**death_drop_config), # needs to be before inventory
             Inventory(**inventory_config),
             Health(**health_config),
+            TrackKills(),
             AutoPickup(**auto_pickup_config),
             UseLast(),
             GiveLast(**give_config),
@@ -314,6 +331,10 @@ class OneVsOne(BaseEnv):
         ]
         # Setup boxes (objects and items).
         boxes_config = self.config['boxes']
+        print(f'Boxes ownership: {self.box_ownership}')
+        boxes_object_class = OwnedObject if self.box_ownership else Object
+        boxes_object_item_class = \
+            OwnedObjectItem if self.box_ownership else ObjectItem
         boxes_spawn_config = boxes_config['reset_spawns']
         box_size = boxes_spawn_config.pop('box_size')
         boxes_spawn_config['prototype'] = box_prototype(box_size)
@@ -321,11 +342,11 @@ class OneVsOne(BaseEnv):
         boxes_item_config = boxes_config['item']
         boxes_item_size = boxes_item_config.pop('item_size')
         boxes_item_config['prototype'] = item_prototype(boxes_item_size)
-        boxes_items = ObjectItem(**boxes_item_config)
+        boxes_items = boxes_object_item_class(**boxes_item_config)
         boxes_items_modules = [boxes_items]
         boxes_modules = [
             ResetSpawns(spawner=self.spawner, **boxes_spawn_config),
-            Object(boxes_items),
+            boxes_object_class(boxes_items),
             sim.IndexBodies(),
             Health(health=boxes_config['health']),
         ]
@@ -522,7 +543,11 @@ class OneVsOne(BaseEnv):
             box_item_module = \
                 self.simulation.groups['box_items'].get(ObjectItem)[0]
             for i, box_item in enumerate(box_item_bodies):
-                shape = box_item_module.data[box_item].shape
+                shape = None
+                if self.box_ownership:
+                    shape = box_item_module.data[box_item][0].shape
+                else:
+                    shape = box_item_module.data[box_item].shape
                 vertices = []
                 for vertex in shape.vertices:
                     vertices.extend([*vertex])
@@ -563,7 +588,12 @@ class OneVsOne(BaseEnv):
                 x['heal_slot_mask'][i][0] = 0
             if self.n_boxes > 0 and isinstance(item, ObjectItem):
                 vertices = []
-                for vertex in data.shape.vertices:
+                shape = None
+                if self.box_ownership:
+                    shape = data[0].shape
+                else:
+                    shape = data.shape
+                for vertex in shape.vertices:
                     vertices.extend([*vertex])
                 x['box_slot'][i] = np_floats(vertices)
                 x['box_slot_mask'][i][0] = 0
@@ -641,14 +671,22 @@ class OneVsOne(BaseEnv):
 
     def compute_rewards(
             self, agents: sim.Group,
-            r_alive: float,
-            r_dead: float
+            r_alive: float = 0,
+            r_dead: float = 0,
+            r_kill: float = 0,
+            r_death: float = 0,
     ) -> Tuple[float, ...]:
         bodies = agents.get(sim.IndexBodies)[0].bodies
         rewards = np.zeros(self.n_agents, dtype=np.float32)
         rewards += np.array([
             r_dead if body is None else r_alive for body in bodies
         ])
+        for killer_id in agents.get(TrackKills)[0].flush():
+            rewards[killer_id] += r_kill
+            #print(f'kill by {killer_id}, r = {rewards}')
+        for dead_id in agents.get(sim.TrackDeaths)[0].flush():
+            rewards[dead_id] += r_death
+            #print(f'{dead_id} is dead, r = {rewards}')
         self.last_rewards = rewards
         return rewards
 

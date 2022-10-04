@@ -1,6 +1,6 @@
 import math
 from typing import (
-    Any, Type, Union, Optional, Tuple, List, Dict, Set, NamedTuple)
+    Any, Type, Callable, Union, Optional, Tuple, List, Dict, Set, NamedTuple)
 from operator import attrgetter
 
 from Box2D import ( # type: ignore
@@ -161,6 +161,7 @@ class Item(sim.Module):
 # adds a list inventory with a fixed number of slots to the bodies in its 
 # group; no other functionality is added, but the pickup, use, drop and 
 # drop_all methods can be used by other modules to manipulate inventories
+#TODO make it so that a single item can have multiple uses, each with their own data
 class Inventory(sim.Module):
 
     slots: int
@@ -361,16 +362,21 @@ class Health(sim.Module):
 
     # starting health for all bodies with this module
     health: int
-    # can be set by others to disable damage and heal
+    # can be set by others to disable damage and heal entirely (overrides behaviour of vulnerabilities)
     immune: bool
+    # if an entry for a body is present, it can only be damaged by causes in that set; if the entry is not present, it can be damaged by anyone; if the entry has 0 elements, the body is immune
+    vulnerabilities: Dict[b2Body, Set[Any]]
     healths: Dict[b2Body, int]
+    on_death: Optional[Callable]
 
-    def __init__(self, health: int):
+    def __init__(self, health: int, on_death: Optional[Callable] = None):
         self.health = health
+        self.on_death = on_death
 
     def post_reset(self, group: sim.Group):
         #TODO do this in post_spawn if attr is not set yet
         self.healths = {body: self.health for body in group.bodies}
+        self.vulnerabilities = {}
         self.immune = False
 
     def post_step(self, group: sim.Group):
@@ -384,16 +390,46 @@ class Health(sim.Module):
     def pre_despawn(self, bodies: List[b2Body]):
         for body in bodies:
             del self.healths[body]
+            if body in self.vulnerabilities:
+                del self.vulnerabilities[body]
 
-    def damage(self, body: b2Body, damage: int):
-        if self.immune or body not in self.healths:
-            return
-        self.healths[body] -= damage
+    # convenience method to add vulnerabilities
+    def add_vulnerabilities(self, body: b2Body, causes):
+        if body not in self.vulnerabilities:
+            self.vulnerabilities[body] = set()
+        if not isinstance(causes, set):
+            causes = set(causes)
+        self.vulnerabilities[body] |= causes
 
-    def heal(self, body: b2Body, healing: int):
-        if self.immune or body not in self.healths:
+    # removes given vulnerabilities; if the resulting list is empty and del_empty is True, the body entry gets removed from the vulnerabilities dict
+    def remove_vulnerabilities(
+        self, body: b2Body, causes, del_empty: bool = True
+    ):
+        if body not in self.vulnerabilities:
             return
-        self.healths[body] += healing
+        if not isinstance(causes, set):
+            causes = set(causes)
+        self.vulnerabilities[body] -= causes
+        if del_empty and len(self.vulnerabilities[body]) == 0:
+            del self.vulnerabilities[body]
+
+    def _change_health(self, body: b2Body, delta: int, cause: Any = None):
+        if body not in self.healths:
+            return
+        if body in self.vulnerabilities:
+            if len(self.vulnerabilities[body]) == 0:
+                return
+            if cause not in self.vulnerabilities[body]:
+                return
+        self.healths[body] += delta
+        if self.healths[body] <= 0 and self.on_death is not None:
+            self.on_death(body, cause)
+
+    def damage(self, body: b2Body, damage: int, cause: Any = None):
+        self._change_health(body, -damage, cause)
+
+    def heal(self, body: b2Body, healing: int, cause: Any = None):
+        self._change_health(body, healing, cause)
 
 # gives an short-range attack that damages the target (if it has an health 
 # module)
@@ -427,14 +463,14 @@ class ContinuousMelee(sim.Module):
         for body, target, attack \
         in zip(group.bodies, self.targets, self.attacks):
             if target is not None and attack:
-                self._attack(target, self.damage)
+                self._attack(target, self.damage, attacker=body)
         if not self.drift:
             self.attacks = []
 
-    def _attack(self, target: b2Body, damage: int):
+    def _attack(self, target: b2Body, damage: int, attacker: b2Body):
         healths = sim.Group.body_group(target).get(Health)
         for health in healths:
-            health.damage(target, damage) # type: ignore
+            health.damage(target, damage, cause=attacker) # type: ignore
 
 # gives a "strong" short-range attack with cooldown that damages the target (if it has an health module)
 class Melee(sim.Module):
@@ -475,7 +511,7 @@ class Melee(sim.Module):
         in zip(group.bodies, self.targets, self.attacks):
             on_cooldown = body in self.cooldowns
             if target is not None and attack and not on_cooldown:
-                self._attack(target, self.damage)
+                self._attack(target, self.damage, attacker=body)
                 self.cooldowns[body] = self.cooldown
         if not self.drift:
             self.attacks = []
@@ -488,10 +524,38 @@ class Melee(sim.Module):
                 cooleddown.add(k)
         [self.cooldowns.pop(k) for k in cooleddown]
 
-    def _attack(self, target: b2Body, damage: int):
+    def _attack(self, target: b2Body, damage: int, attacker: b2Body):
         healths = sim.Group.body_group(target).get(Health)
         for health in healths:
-            health.damage(target, damage) # type: ignore
+            health.damage(target, damage, cause=attacker) # type: ignore
+
+# adds deaths to a buffer (not with body objects, but with body indices) that can be flushed with flush method
+class TrackKills(sim.Module):
+
+    def __init__(self, index_module: sim.IndexBodies = None):
+        self.index_module = index_module
+
+    def post_reset(self, group: sim.Group):
+        self.group = group
+        if self.index_module is None:
+            self.index_module = group.get(sim.IndexBodies)[0]
+        for m in group.get(Health):
+            m.on_death = self
+        self.kills = []
+
+    # on_death callback for health module(s)
+    def __call__(self, body: b2Body, cause: Any):
+        if not isinstance(cause, b2Body):
+            return
+        if not cause in self.group.bodies:
+            return
+        killer_id = self.index_module.bodies.index(cause)
+        self.kills.append(killer_id)
+
+    def flush(self):
+        kills = self.kills
+        self.kills = []
+        return kills
 
 # heals the target by the specified amount of health
 class Heal(Item):
@@ -623,7 +687,8 @@ class SafeZone(sim.Module):
             if self.endgame \
             or not shape.TestPoint(transform, body.worldCenter):
                 self.outliers.append(body)
-                [health.damage(body, self.damage) for health in healths]
+                [health.damage(body, self.damage, cause=self)
+                 for health in healths]
         self.tick()
 
     @property
@@ -719,6 +784,56 @@ class Object(sim.Module):
             [(body.position, sim.prototype(body)) for body in bodies]
         )
 
+# a variant of object items that treats the data as a pair (proto, owner) and spawns objects that can only be damaged by owner; to be used with OwnedObject
+class OwnedObjectItem(ObjectItem):
+
+    prototype: sim.Prototype
+    offset: float
+    # this is automatically set by the Object module that uses this module; 
+    # rememeber there can be only 1 for now!
+    object_group: sim.Group
+
+    def __init__(self, prototype: sim.Prototype, offset: float):
+        self.prototype = prototype
+        self.offset = offset
+
+    def use(self, user: b2Body, data: Any):
+        proto, owner = data
+        offset = sim.from_polar(self.offset, user.angle)
+        self.object_group.spawn(
+            [proto],
+            [user.position + offset]
+        )
+        for m in self.object_group.get(Health):
+            m.add_vulnerabilities(self.object_group.bodies[-1], [owner])
+
+# a variant of objects that records the cause of death and uses it to only allows further instances of that object to be damaged only by that cause
+class OwnedObject(Object):
+
+    item_module: ObjectItem
+    next_spawns: List[Tuple] #TODO specify type better
+
+    def __init__(self, item_module: ObjectItem):
+        self.item_module = item_module
+
+    def post_reset(self, group: sim.Group):
+        self.item_module.object_group = group
+        self.next_spawns = []
+        self.group = group
+        for m in group.get(Health):
+            m.on_death = self
+
+    def pre_step(self, group: sim.Group):
+        for pos, data in self.next_spawns:
+            self.item_module.drop(placement=pos, data=data)
+        self.next_spawns = []
+
+    def pre_despawn(self, bodies):
+        pass
+
+    # the on_death callback for the health module(s)
+    def __call__(self, body: b2Body, cause: Any):
+        self.next_spawns.append((body.position, (sim.prototype(body), cause)))
 
 
 # utilties
