@@ -331,7 +331,6 @@ class OneVsOne(BaseEnv):
         ]
         # Setup boxes (objects and items).
         boxes_config = self.config['boxes']
-        print(f'Boxes ownership: {self.box_ownership}')
         boxes_object_class = OwnedObject if self.box_ownership else Object
         boxes_object_item_class = \
             OwnedObjectItem if self.box_ownership else ObjectItem
@@ -683,10 +682,10 @@ class OneVsOne(BaseEnv):
         ])
         for killer_id in agents.get(TrackKills)[0].flush():
             rewards[killer_id] += r_kill
-            #print(f'kill by {killer_id}, r = {rewards}')
+            #print(f'[{self.steps}] kill by {killer_id}, r = {rewards}')
         for dead_id in agents.get(sim.TrackDeaths)[0].flush():
             rewards[dead_id] += r_death
-            #print(f'{dead_id} is dead, r = {rewards}')
+            #print(f'[{self.steps}] {dead_id} is dead, r = {rewards}')
         self.last_rewards = rewards
         return rewards
 
@@ -697,10 +696,11 @@ class OneVsOne(BaseEnv):
             b for b in agents.get(sim.IndexBodies)[0].bodies
             if b is not None
         ])
+        #print(f'[{self.steps}] n_alive = {n_alive}')
         if self.config['gameover']['mode'] == 'alldead':
             done = n_alive == 0
         elif self.config['gameover']['mode'] == 'lastalive':
-            done = n_alive == 1
+            done = n_alive <= 1
         else:
             assert False, 'Invalid gameover mode'
         if done:
