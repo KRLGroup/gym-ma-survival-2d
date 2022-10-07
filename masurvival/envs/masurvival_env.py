@@ -526,6 +526,9 @@ class MaSurvival(BaseEnv):
             )
             heal_bodies = self.simulation.groups['heals'].bodies
             for i, heal in enumerate(heal_bodies):
+                if i > self.n_heals:
+                    print(f'Warning: {len(heal_bodies) - self.n_heals} excess heal item bodies')
+                    break
                 x_heals[i] = np_floats([*heal.position])
             x['heals'] = np.tile(x_heals, [self.n_agents, 1, 1])
             if not self.config['observation']['omniscent']:
@@ -544,6 +547,9 @@ class MaSurvival(BaseEnv):
             )
             boxes_bodies = self.simulation.groups['boxes'].bodies
             for i, box in enumerate(boxes_bodies):
+                if i > self.n_boxes:
+                    print(f'Warning: {len(boxes_bodies) - self.n_boxes} excess box bodies')
+                    break
                 vertices = []
                 for vertex in box.fixtures[0].shape.vertices:
                     vertices.extend([*vertex])
@@ -569,6 +575,9 @@ class MaSurvival(BaseEnv):
             box_item_module = \
                 self.simulation.groups['box_items'].get(ObjectItem)[0]
             for i, box_item in enumerate(box_item_bodies):
+                if i > self.n_boxes:
+                    print(f'Warning: {len(box_item_bodies) - self.n_boxes} excess box item bodies')
+                    break
                 shape = None
                 if self.box_ownership:
                     shape = box_item_module.data[box_item][0].shape
