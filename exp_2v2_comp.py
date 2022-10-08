@@ -67,7 +67,7 @@ config = {
     'safe_zone': {
         'phases': 8,
         'cooldown': 100,
-        'damage': 0,
+        'damage': 1,
         'radiuses': [12.5, 10, 7.5, 5, 4, 2, 1],
         'centers': 'random',
     },
@@ -351,7 +351,7 @@ def test_random_policy(
         if done:
             print(f'done after {i} steps')
             break
-            obs = env.reset()
+            observation = env.reset()
     end = time.time()
     print(f'avg step time: {(end - start)/i}')
     print(f'done')

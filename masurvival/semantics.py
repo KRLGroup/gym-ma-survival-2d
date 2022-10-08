@@ -386,6 +386,7 @@ class Health(sim.Module):
     # opposite of vulnerabilities; they are checked first, so if a cause appears in both, immunities take precedence
     immunities: Dict[b2Body, Set[Any]]
     healths: Dict[b2Body, int]
+    causes: Dict[b2Body, Any]
     on_death: Optional[Callable]
 
     def __init__(self, health: int, on_death: Optional[Callable] = None):
@@ -395,6 +396,7 @@ class Health(sim.Module):
     def post_reset(self, group: sim.Group):
         #TODO do this in post_spawn if attr is not set yet
         self.healths = {body: self.health for body in group.bodies}
+        self.causes = {}
         self.vulnerabilities = {}
         self.immunities = {}
         self.immune = False
@@ -409,7 +411,11 @@ class Health(sim.Module):
 
     def pre_despawn(self, bodies: List[b2Body]):
         for body in bodies:
+            cause = self.causes.get(body)
+            self.on_death(body, cause)
             del self.healths[body]
+            if body in self.causes:
+                del self.causes[body]
             if body in self.vulnerabilities:
                 del self.vulnerabilities[body]
             if body in self.immunities:
@@ -465,8 +471,7 @@ class Health(sim.Module):
         if V is not None and cause not in V:
             return
         self.healths[body] += delta
-        if self.healths[body] <= 0 and self.on_death is not None:
-            self.on_death(body, cause)
+        self.causes[body] = cause
 
     def damage(self, body: b2Body, damage: int, cause: Any = None):
         self._change_health(body, -damage, cause)
