@@ -464,10 +464,8 @@ class MaSurvival(BaseEnv):
     # returns current stats and resets internal stats
     def flush_stats(self):
         stats = dict(self.stats)
-        self.stats = {
-            'reward0': 0.,
-            'reward1': 0.,
-        }
+        n_rewards = 2 if self.has_teams else self.n_agents
+        self.stats = { f'reward{i}': 0. for i in range(n_rewards) }
         return stats
 
     # updates and returns stats
@@ -475,8 +473,14 @@ class MaSurvival(BaseEnv):
         if not hasattr(self, 'stats'):
             self.stats = {} # dummy stats to allow flushing and resetting
             self.flush_stats()
-        self.stats['reward0'] += self.last_rewards[0]
-        self.stats['reward1'] += self.last_rewards[1]
+        if not self.has_teams:
+            for i in range(self.n_agents):
+                self.stats[f'reward{i}'] += self.last_rewards[i]
+        else:
+            for i in [0,1]:
+                agents_group = self.simulation.groups['agents']
+                j = agents_group.get(TwoTeams)[0].teams[i][0]
+                self.stats[f'reward{i}'] += self.last_rewards[j]
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
         agent_bodies = agents.get(sim.IndexBodies)[0].bodies
