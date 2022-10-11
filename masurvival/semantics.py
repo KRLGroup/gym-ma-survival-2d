@@ -166,9 +166,11 @@ class Inventory(sim.Module):
 
     slots: int
     inventories: Dict[b2Body, List[Tuple[Item, Any]]]
+    on_use: Optional[Callable]
 
-    def __init__(self, slots: int):
+    def __init__(self, slots: int, on_use: Optional[Callable] = None):
         self.slots = slots
+        self.on_use = on_use
 
     def full(self, body: b2Body):
         return len(self.inventories[body])
@@ -206,6 +208,8 @@ class Inventory(sim.Module):
             item, data = self.inventories[user].pop(slot)
         except IndexError:
             return
+        if self.on_use is not None:
+            self.on_use(item, user, data)
         item.use(user, data)
 
     def drop(
@@ -239,6 +243,27 @@ class Inventory(sim.Module):
     def pre_despawn(self, bodies: List[b2Body]):
         for body in bodies:
             del self.inventories[body]
+
+# tracks use stats, divided by item type
+class TrackUse(sim.Module):
+
+    def post_reset(self, group: sim.Group):
+        for m in group.get(Inventory):
+            m.on_use = self
+        self.uses = {}
+
+    # on_use callback for inventory
+    def __call__(self, item, user, data):
+        item_class = type(item)
+        if item_class not in self.uses:
+            self.uses[item_class] = 0
+        self.uses[item_class] += 1
+
+    def flush(self):
+        uses = self.uses
+        self.uses = {}
+        return uses
+
 
 # makes bodies pickup items in a shape centered on them, putting them in 
 # the first inventory module it finds in the group

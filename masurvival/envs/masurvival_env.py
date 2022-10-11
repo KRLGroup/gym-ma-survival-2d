@@ -16,7 +16,7 @@ from masurvival.semantics import (
     Health, Heal, ContinuousMelee, Item, item_prototype, Inventory, 
     AutoPickup, UseLast, DeathDrop, SafeZone, BattleRoyale, GiveLast, Object, 
     ObjectItem, ImmunityPhase, Melee, RandomizeBoxShapes, OwnedObject, 
-    OwnedObjectItem, TrackKills, TwoTeams, TeamBadge)
+    OwnedObjectItem, TrackKills, TwoTeams, TeamBadge, TrackUse)
 
 Vec = Tuple[float, ...]
 # Self, lidars, other agents, inventory, items, objects
@@ -271,6 +271,10 @@ class MaSurvival(BaseEnv):
         return 'ownership' in boxes_config and boxes_config['ownership']
 
     @property
+    def box_object_item_class(self):
+        return OwnedObjectItem if self.box_ownership else ObjectItem
+
+    @property
     def has_teams(self):
         return 'teams' in self.config and self.config['teams']['twoteams']
 
@@ -320,6 +324,7 @@ class MaSurvival(BaseEnv):
             sim.DynamicMotors(**motor_config),
             DeathDrop(**death_drop_config), # needs to be before inventory
             Inventory(**inventory_config),
+            TrackUse(),
             Health(**health_config),
             TrackKills(),
             AutoPickup(**auto_pickup_config),
@@ -336,8 +341,7 @@ class MaSurvival(BaseEnv):
         # Setup boxes (objects and items).
         boxes_config = self.config['boxes']
         boxes_object_class = OwnedObject if self.box_ownership else Object
-        boxes_object_item_class = \
-            OwnedObjectItem if self.box_ownership else ObjectItem
+        boxes_object_item_class = self.box_object_item_class
         boxes_spawn_config = boxes_config['reset_spawns']
         box_size = boxes_spawn_config.pop('box_size')
         boxes_spawn_config['prototype'] = box_prototype(box_size)
@@ -466,13 +470,20 @@ class MaSurvival(BaseEnv):
         stats = dict(self.stats)
         n_rewards = 2 if self.has_teams else self.n_agents
         self.stats = { f'reward{i}': 0. for i in range(n_rewards) }
+        for i in range(n_rewards):
+            self.stats[f'kills{i}'] = 0
+        self.stats['steps'] = 0
+        self.stats['heals_used'] = 0
+        self.stats['boxes_placed'] = 0
         return stats
 
     # updates and returns stats
     def _update_stats(self):
+        agents_group = self.simulation.groups['agents']
         if not hasattr(self, 'stats'):
             self.stats = {} # dummy stats to allow flushing and resetting
             self.flush_stats()
+        # Update reward stats.
         if not self.has_teams:
             for i in range(self.n_agents):
                 self.stats[f'reward{i}'] += self.last_rewards[i]
@@ -481,6 +492,18 @@ class MaSurvival(BaseEnv):
                 agents_group = self.simulation.groups['agents']
                 j = agents_group.get(TwoTeams)[0].teams[i][0]
                 self.stats[f'reward{i}'] += self.last_rewards[j]
+        # Update kill stats.
+        for i, kills in enumerate(self.last_kills):
+            self.stats[f'kills{i}'] += kills
+        # Update step count.
+        self.stats['steps'] += 1
+        # Update item usages.
+        item_uses = agents_group.get(TrackUse)[0].flush()
+        if Heal in item_uses:
+            self.stats['heals_used'] += item_uses[Heal]
+        if self.box_object_item_class in item_uses:
+            self.stats['boxes_placed'] += \
+                item_uses[self.box_object_item_class]
 
     def fetch_observations(self, agents: sim.Group) -> Observation:
         agent_bodies = agents.get(sim.IndexBodies)[0].bodies
@@ -741,6 +764,7 @@ class MaSurvival(BaseEnv):
         kills = agents.get(TrackKills)[0].flush()
         deaths = agents.get(sim.TrackDeaths)[0].flush()
         if not self.has_teams:
+            self.last_kills = [0 for _ in range(len(indexed_agents))]
             # Rewards for being alive or dead.
             for i, agent_body in enumerate(indexed_agents):
                 if agent_body is not None:
@@ -751,12 +775,12 @@ class MaSurvival(BaseEnv):
             for _, killer in kills:
                 if killer in indexed_agents:
                     rewards[indexed_agents.index(killer)] += r_kill
-                    #print(f'[{self.steps}] kill by {indexed_agents.index(killer)}, r = {rewards}')
+                    self.last_kills[indexed_agents.index(killer)] += 1
             for dead_id in deaths:
                 rewards[dead_id] += r_death
-                #print(f'[{self.steps}] {dead_id} is dead, r = {rewards}')
         else:
             teams = agents.get(TwoTeams)[0]
+            self.last_kills = [0, 0]
             # Rewards for being alive or dead.
             for team_id in [0,1]:
                 if teams.team_is_alive(team_id):
@@ -768,12 +792,11 @@ class MaSurvival(BaseEnv):
                 if not isinstance(killer_badge, TeamBadge):
                     continue
                 rewards[np.array(teams.teams[killer_badge.i])] += r_kill
-                #print(f'[{self.steps}] kill by {killer_badge.i}, r = {rewards}')
+                self.last_kills[killer_badge.i] += 1
             # Rewards for deaths.
             for dead_id in deaths:
                 victim_team = teams.teams[teams.get_team_id(dead_id)]
                 rewards[np.array(victim_team)] += r_death
-                #print(f'[{self.steps}] {dead_id} is dead, r = {rewards}')
         self.last_rewards = rewards
         return rewards
 
