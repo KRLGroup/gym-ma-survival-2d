@@ -917,7 +917,7 @@ class TeamBadge:
     def __init__(self, i):
         self.i = i
 
-# divides the bodies in the group into 2 teams; mainly used for immunity between team memebers and convenience functions
+# divides the bodies in the group into 2 teams; mainly used for immunity between team memebers and convenience functions; automatically changes the causes of damage for Melee and ContinuousMelee to the team badge, and adds immunities/strangers to their Health module
 # should be put after index bodies and any initial spawner
 class TwoTeams(sim.Module):
 
@@ -979,7 +979,6 @@ class TwoTeams(sim.Module):
             self.index_bodies.bodies[i] is not None
             for i in self.teams[team_id]
         )
-
 
 
 # utilties

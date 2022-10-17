@@ -1,0 +1,108 @@
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 1v1_all_high.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0010378193855285645, 2.9737425813062633e-05
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 1v1_all_mid.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0009862375259399414, 6.282987035408153e-05
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 1v1_heals_low.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0007598447799682617, 0.00010102854423999622
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 1v1_heals_mid.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0007580637931823731, 0.00011540739610568928
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 2v2_all_high.
+Splitting agents into 2 teams.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 1,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0014163875579833985, 6.078003784900548e-05
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 2v2_all_low.
+Splitting agents into 2 teams.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0014754533767700195, 0.00014884455089813185
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 2v2_all_mid.
+Splitting agents into 2 teams.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0014041805267333985, 7.249613395798745e-05
+pygame 2.1.0 (SDL 2.0.16, Python 3.10.4)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loading environment configuration from 2v2_heals_mid.
+Splitting agents into 2 teams.
+Maximum number of steps reached, terminating episode.
+Episode complete. Stats printed below.
+{'boxes_placed': 0,
+ 'heals_used': 0,
+ 'kills0': 0,
+ 'kills1': 0,
+ 'reward0': 100.0,
+ 'reward1': 100.0,
+ 'steps': 100}
+Performance test results: 0.0012090802192687988, 0.00012975156311464497

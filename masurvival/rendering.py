@@ -592,3 +592,24 @@ class SafeZone(View):
                     body, self.outlier_fill, self.outlier_outline, 
                     self.outlier_layer)
 
+class ColoredBodies(View):
+
+    fills: List[Optional[Color]]
+    outline: List[Optional[Color]]
+    layer: int
+
+    def __init__(
+            self, fills: List[Optional[Color]] = None,
+            outlines: List[Optional[Color]] = None, layer: int = 0):
+        self.fills = fills
+        self.outlines = outlines
+        self.layer = layer
+
+    def draw(self, canvas: Canvas, group: sim.Group):
+        indexed_bodies = group.get(sim.IndexBodies)[0]
+        for body, fill, outline \
+        in zip(indexed_bodies.bodies, self.fills, self.outlines):
+            if body is not None:
+                canvas.draw_body(body, fill, outline, self.layer)
+
+

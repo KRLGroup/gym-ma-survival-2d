@@ -832,14 +832,26 @@ class MaSurvival(BaseEnv):
 
     def init_views(self):
         import masurvival.rendering as rendering
+        if self.has_teams:
+            team1 = rendering.Color('cornflowerblue')
+            team2 = rendering.Color('tomato2')
+            outline = rendering.agent_bodies_view_config['outline']
+            layer = rendering.agent_bodies_view_config['layer']
+            agent_body_view = rendering.ColoredBodies(
+                fills=[team1, team1, team2, team2],
+                outlines=[outline, outline, outline, outline],
+                layer=layer,
+            )
+        else:
+            agent_body_view = \
+                rendering.Bodies(**rendering.agent_bodies_view_config)
         views = {
             self.simulation.groups['agents']: [
                 rendering.SafeZone(
                     **rendering.safe_zone_view_config), # type: ignore
                 #rendering.ImmunityCooldown(
                 #    **rendering.immunity_view_config), # type: ignore
-                rendering.Bodies(
-                    **rendering.agent_bodies_view_config), # type: ignore
+                agent_body_view,
                 rendering.BodyIndices(
                     **rendering.body_indices_view_config), # type: ignore
                 #rendering.Lidars(

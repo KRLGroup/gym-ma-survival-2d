@@ -8,9 +8,11 @@ models_dir = 'models'
 checkpoints_dir = 'checkpoints'
 checkpoint_prefix = 'rl_model'
 tb_log_dir = 'tb_logs'
+tb_dev_id_file = 'tb_dev_id.txt'
 
 def get_experiment(exp_dirpath):
     exp = {
+        'name': dir_basename(exp_dirpath),
         'models_dir': os.path.join(exp_dirpath, models_dir),
         'checkpoints_dir': os.path.join(exp_dirpath, checkpoints_dir),
         'checkpoint_prefix': checkpoint_prefix,
@@ -18,6 +20,13 @@ def get_experiment(exp_dirpath):
     }
     with open(os.path.join(exp_dirpath, 'env.json')) as f:
         exp['env_config'] = json.load(f)
+    with open(os.path.join(exp_dirpath, tb_dev_id_file)) as f:
+        lines = f.readlines()
+        assert len(lines) == 1
+        #TODO this only works if line break is just '\n'
+        exp['tb_dev_id'] = lines[0].rstrip('\n')
+    with open(os.path.join(exp_dirpath, 'plot.json')) as f:
+        exp['plot'] = json.load(f)
     return exp
 
 def init_experiment(exp):

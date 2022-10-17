@@ -17,9 +17,9 @@ from stable_baselines3.common.policies import MultiInputActorCriticPolicy
 from stable_baselines3.common.callbacks import CheckpointCallback
 
 from masurvival.envs.masurvival_env import MaSurvival
-from sb3_experiments.vec_env_costume import VecEnvCostume
-from sb3_experiments.sb3_models import MhSaExtractor
-from sb3_experiments.sb3_log_stats import LogStats
+from sb3_utils.vec_env_costume import VecEnvCostume
+from sb3_utils.sb3_models import MhSaExtractor
+from sb3_utils.sb3_log_stats import LogStats
 
 import experiments
 
@@ -95,19 +95,6 @@ argparse_args = [
         'type': str,
         'help': 'The path to the experiment directory.',
     }),
-#     (['-t', '--tags'], {
-#         'required': True,
-#         'metavar': 'T',
-#         'type': str,
-#         'nargs': '+',
-#         'help': 'Tags to extract from the tensorboard runs.',
-#     }),
-#     (['-o', '--output'], {
-#         'dest': 'out_fpath',
-#         'metavar': 'OUTPATH',
-#         'default': None,
-#         'help': 'The path to save the concatenated dataframe to.',
-#     }),
 ]
 
 if __name__ == '__main__':
