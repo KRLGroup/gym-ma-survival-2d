@@ -54,7 +54,7 @@ walls_view_config = {
 health_view_config = {
     'y_offset': 0.75,
     'max_health': 100,
-    'fill': Color('green'),
+    'fill': Color('blue'),
     'outline': None,
     'layer': 1,
 }

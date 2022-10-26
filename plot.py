@@ -1,6 +1,7 @@
 from itertools import cycle
 
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 import tensorboard as tb
 import pandas as pd
@@ -16,7 +17,8 @@ def extract_run(df, run, tags):
         run_df = run_df.merge(tag_df, on='step', how='outer')
     return run_df
 
-def plot_tags(exp_df, tags, tag2label, title, subplots, smoothing=0.6):
+def plot_tags(exp_df, tags, tag2label, title, subplots, smoothing=0.8):
+    matplotlib.rcParams.update({'font.size': 4})
     runs = exp_df['run'].unique()
     assert len(runs) == 1
     run = runs[0]
@@ -26,16 +28,19 @@ def plot_tags(exp_df, tags, tag2label, title, subplots, smoothing=0.6):
     fig, axs = plt.subplots(len(subplots))
     fig.suptitle(title)
     colors = cycle(plt.rcParams['axes.prop_cycle'].by_key()['color'])
+    for ax in axs:
+        ax.set_box_aspect(1)
     for ax, (subtitle, subplot) in zip(axs, subplots.items()):
         for label, column in subplot.items():
             color = next(colors)
-            ax.plot(run_df['step'], run_df[column], alpha=0.2, color=color)
+            kwargs = dict(color=color, linewidth=0.75)
+            ax.plot(run_df['step'], run_df[column], alpha=0.2, **kwargs)
             ax.plot(
-                smoothed['step'], smoothed[column], label=label, color=color
+                smoothed['step'], smoothed[column], label=label, **kwargs
             )
         #ax.set_title(subtitle)
         ax.set(xlabel='steps', ylabel=subtitle)
-        ax.legend()
+        #ax.legend()
     for ax in axs:
         ax.label_outer()
 #     run_df = run_df.rename(columns={

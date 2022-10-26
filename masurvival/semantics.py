@@ -437,7 +437,8 @@ class Health(sim.Module):
     def pre_despawn(self, bodies: List[b2Body]):
         for body in bodies:
             cause = self.causes.get(body)
-            self.on_death(body, cause)
+            if self.on_death is not None:
+                self.on_death(body, cause)
             del self.healths[body]
             if body in self.causes:
                 del self.causes[body]

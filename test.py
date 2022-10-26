@@ -215,7 +215,10 @@ def main(
     )
     if screenshot:
         import imageio
-        img_fpath = f'{exp["name"]}.png'
+        if is_model:
+            img_fpath = f'{exp["name"]}.png'
+        else:
+            img_fpath = f'{os.path.splitext(env_config_fpath)[0]}.png'
         print(f'Saving screenshot to {img_fpath}.')
         imageio.imsave(img_fpath, maybe_frames[-1])
     if gif_fpath is not None:
