@@ -291,6 +291,8 @@ class MaSurvival(BaseEnv):
         return ks
 
     def __init__(self, config=None):
+        if config is None:
+            config = self.config
         super().__init__(config)
         # Setup agent and global spawner.
         spawn_grid_config = self.config['spawn_grid']
@@ -826,8 +828,6 @@ class MaSurvival(BaseEnv):
             done = n_alive <= 1
         else:
             assert False, 'Invalid gameover mode'
-        if done:
-            print(f'done in {self.steps} steps')
         return done
 
     def init_views(self):
@@ -905,7 +905,6 @@ def _zero_element(space: gym.spaces.Space, dtype=np.float32):
         assert False, f'Unsupported space of type {type(space)}'
 
 
-#TODO import this from the policy opt utils
 # The "structure" of the arguments is taken from the 'struct_arg', which is the last by default.
 def recursive_apply(f: Callable, *args: Any, default: Optional[Any] = None, struct_arg: int = -1) -> Any:
     if len(args) == 0:
